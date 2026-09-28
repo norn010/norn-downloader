@@ -114,7 +114,33 @@ const handlers = {
     await store.set({ lastError: null });
     await idleBadge();
   },
+  ytdlp: m => ytdlp(m.url),
 };
+
+// ---- yt-dlp handoff: the native messaging host installed by native/install.ps1 runs yt-dlp on this machine ----
+// An open native port keeps this worker alive until the download ends.
+function ytdlp(url) {
+  const port = chrome.runtime.connectNative('com.norn.ytdlp');
+  let finished = false;
+  port.onMessage.addListener(async m => {
+    if (m.type === 'progress') return chrome.action.setBadgeText({ text: `${Math.floor(m.percent)}%` });
+    finished = true;
+    port.disconnect();
+    if (m.type === 'error') return fail(`yt-dlp: ${m.message}`);
+    await store.set({ ytdlpSaved: m.file ?? 'your Downloads folder' });
+    await idleBadge();
+  });
+  port.onDisconnect.addListener(() => {
+    if (finished) return;
+    const why = chrome.runtime.lastError?.message ?? '';
+    fail(
+      /not found/i.test(why)
+        ? 'The yt-dlp helper is not installed yet: run native\\install.ps1 (see README), then reload the extension.'
+        : `The yt-dlp helper stopped${why ? `: ${why}` : ''}`,
+    );
+  });
+  port.postMessage({ type: 'download', url });
+}
 
 // ---- Facebook / Instagram videos with sound ----
 

@@ -44,7 +44,7 @@ one-shot scan function with `chrome.scripting.executeScript`.
 
 ## Permissions
 
-`webRequest`, `downloads`, `scripting`, `activeTab`, `offscreen`, `tabCapture`, `storage`, `declarativeNetRequestWithHostAccess` (TikTok Referer, see Flow 2b); host permission `<all_urls>`.
+`webRequest`, `downloads`, `scripting`, `activeTab`, `offscreen`, `tabCapture`, `storage`, `declarativeNetRequestWithHostAccess` (TikTok Referer, see Flow 2b), `nativeMessaging` (yt-dlp, Flow 2c); host permission `<all_urls>`.
 
 ## Data model (`chrome.storage.session`)
 
@@ -107,6 +107,16 @@ X (`x.com|twitter.com/<name>/status/<id>`, verified 2026-09-28): pages don't emb
 13. On x.com, `hideSitePieces` drops video.twimg.com HLS playlists and pieces (audio is a separate rendition there). Protected or deleted posts → error suggesting Record tab.
 
 8. Instagram cards use the item's smallest `image_versions2` candidate as the thumbnail instead of loading the video.
+
+## Flow 2c — yt-dlp handoff (YouTube and other sites)
+
+YouTube (verified 2026-09-28, logged in, from the user's own browser and network): the web page offers SABR only (no stream URLs), the iOS client's URLs return 403 after the first 1 MB without a GVS PO token, ANDROID_VR and TV clients get "confirm you're not a bot". Reimplementing SABR with the page's integrity token is out of scope, so downloads are handed to yt-dlp on the user's machine.
+
+1. `native/install.ps1` (run by the user): winget installs yt-dlp, ffmpeg and Deno; writes `norn-host.bat` (absolute node.exe path) and `com.norn.ytdlp.json` (no BOM; `allowed_origins` = this unpacked extension, id computed from the folder path the way Chrome does); registers it under `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.norn.ytdlp`.
+2. `native/norn-host.mjs`: Chrome native messaging over stdio (4-byte little-endian length + JSON). `{type:'download', url}` (http(s) only) runs `yt-dlp --no-playlist -f "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b" --merge-output-format mp4 -o "<Downloads>/%(title).150B [%(id)s].%(ext)s"` with WinGet's Links folder prepended to PATH, and streams `{type:'progress', percent}`, then `{type:'done', file}` or `{type:'error', message}`. `{type:'ping'}` answers `{type:'pong'}`. A missing yt-dlp is reported as "yt-dlp is not installed — run native\install.ps1".
+3. Extension: `nativeMessaging` permission. The popup's **yt-dlp** button (http(s) pages) sends `ytdlp {url}`; background opens `connectNative('com.norn.ytdlp')` (an open native port keeps the worker alive), shows progress on the badge, and stores `ytdlpSaved` for a popup note with **Open folder** (`downloads.showDefaultFolder`). A missing host sets lastError telling the user to run install.ps1.
+
+Not covered: age-restricted / members-only videos (they need cookies Chrome encrypts on Windows), choosing a quality, cancelling.
 
 ## Flow 3 — Downloads
 

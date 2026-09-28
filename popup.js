@@ -31,7 +31,7 @@ function scanPage() {
 
 const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 const key = `tab:${tab.id}`;
-const { [key]: net = [], status = {}, lastError } = await chrome.storage.session.get([key, 'status', 'lastError']);
+const { [key]: net = [], status = {}, lastError, ytdlpSaved } = await chrome.storage.session.get([key, 'status', 'lastError', 'ytdlpSaved']);
 const name = safeName(tab.title);
 
 let scan = { found: [], srcsets: [], base: tab.url, blobVideo: false };
@@ -167,6 +167,22 @@ $('#stopLive').onclick = async () => {
 $('#dismiss').onclick = () => {
   $('#error').hidden = true;
   chrome.runtime.sendMessage({ type: 'clearError' });
+};
+
+// yt-dlp saves straight to disk, outside Chrome's download list, so say where the last one went
+$('#ytdlp').disabled = !/^https?:/.test(tab.url ?? '');
+$('#ytdlp').onclick = async () => {
+  await chrome.runtime.sendMessage({ type: 'ytdlp', url: tab.url });
+  window.close();
+};
+if (ytdlpSaved) {
+  $('#savedText').textContent = `yt-dlp saved: ${ytdlpSaved.split(/[\\/]/).pop()}`;
+  $('#saved').hidden = false;
+}
+$('#openFolder').onclick = () => {
+  chrome.downloads.showDefaultFolder();
+  chrome.storage.session.remove('ytdlpSaved');
+  $('#saved').hidden = true;
 };
 
 if (lastError) showError(lastError);

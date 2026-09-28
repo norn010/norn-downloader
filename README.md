@@ -17,6 +17,25 @@ Chrome extension สำหรับเลือกโหลดรูป / วิ
 - ไม่เจอวิดีโอ (เช่น reel / story ที่เล่นผ่าน blob:) → กด **Record tab** แล้วเล่นวิดีโอ กด **Stop recording** เมื่อจบ (ได้ไฟล์ .webm)
 - ไอคอนแสดงสถานะ: `42%` กำลังรวมไฟล์, `LIVE` กำลังอัดไลฟ์, `REC` กำลังอัดแท็บ, `!` มี error (เปิด popup เพื่อดู)
 
+## YouTube และเว็บอื่นๆ ด้วย yt-dlp
+
+YouTube ล็อกลิงก์วิดีโอไว้ extension เลยส่งต่อให้ [yt-dlp](https://github.com/yt-dlp/yt-dlp) ที่ติดตั้งในเครื่องเป็นคนโหลด (ใช้กับเว็บอื่นที่ yt-dlp รองรับได้ด้วย)
+
+ตั้งค่าครั้งเดียว:
+
+1. เปิด PowerShell ที่โฟลเดอร์นี้ แล้วรัน
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File native\install.ps1
+   ```
+   สคริปต์จะติดตั้ง yt-dlp, ffmpeg และ Deno ผ่าน winget แล้วลงทะเบียนตัวเชื่อมกับ Chrome ให้ user นี้เท่านั้น (ไม่ต้องใช้สิทธิ์ admin)
+2. รีโหลด Norn Downloader ใน `chrome://extensions`
+
+ใช้งาน: เปิดหน้าวิดีโอ กดปุ่ม **yt-dlp** ใน popup → ไอคอนแสดง % ระหว่างโหลด ได้ไฟล์ `ชื่อคลิป [id].mp4` (H.264 + AAC เปิดได้ทุกเครื่อง) ใน Downloads เปิด popup อีกครั้งจะเห็นชื่อไฟล์และปุ่ม **Open folder**
+
+- YouTube เปลี่ยนระบบบ่อย ถ้าโหลดไม่ได้ให้อัปเดตก่อน: `winget upgrade yt-dlp.yt-dlp`
+- ย้ายโฟลเดอร์ extension แล้วต้องรัน `install.ps1` ใหม่
+- คลิปจำกัดอายุ / สมาชิกเท่านั้น ยังไม่รองรับ (ต้องใช้ cookies ที่ Chrome บน Windows เข้ารหัสไว้)
+
 ## ข้อจำกัด
 
 - เนื้อหา DRM (Netflix, Disney+ ฯลฯ) และสตรีมที่เข้ารหัส โหลดไม่ได้ อัดแท็บก็จะได้จอดำ
