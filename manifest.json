@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Norn Downloader",
+  "version": "0.1.0",
+  "description": "Pick and download images, videos and HLS streams from any page, or record the tab.",
+  "minimum_chrome_version": "116",
+  "permissions": ["webRequest", "downloads", "scripting", "activeTab", "offscreen", "tabCapture", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "Norn Downloader" }
+}
