@@ -1,7 +1,7 @@
 # Norn Downloader — Design
 
 Date: 2026-09-28
-Status: approved in chat, pending spec review
+Status: approved in chat; revised during planning (see "Revisions")
 
 ## Goal
 
@@ -16,122 +16,105 @@ download; HLS saves as one playable file; live HLS and tab recording can be star
 
 - Site-specific extractors (Instagram/Facebook/TikTok APIs).
 - DRM content (Widevine etc.) — not supported, no circumvention.
-- Encrypted HLS (`EXT-X-KEY` with `METHOD` other than `NONE`) — refused with a message pointing to tab recording.
+- Encrypted HLS (`EXT-X-KEY` with `METHOD` other than `NONE`) and byte-range HLS (`EXT-X-BYTERANGE`) — refused with a message pointing to tab recording.
 - Merging separate audio renditions (`EXT-X-MEDIA TYPE=AUDIO`) — result is video-only; documented limitation.
 - DASH (`.mpd`) parsing.
 - Setting `Referer` for CDNs that check it — left as a `ponytail:` note (add via `declarativeNetRequest` when needed).
 
 ## Stack
 
-Plain JavaScript, no build step, no runtime dependencies. Tests use Node's built-in `node --test`.
+Plain JavaScript ES modules, no build step, no runtime dependencies. `minimum_chrome_version` 116.
+Tests use Node's built-in `node --test` (a `package.json` with `"type": "module"` exists only for Node).
 
 ## Files
 
 | File | Responsibility |
 |------|----------------|
 | `manifest.json` | MV3 manifest, permissions |
-| `background.js` | Service worker: network sniffing, per-tab media list, downloads, badge, offscreen lifecycle, message routing |
-| `popup.html` / `popup.js` | UI: filters, list with checkboxes, download/record buttons, page scan injection |
+| `background.js` | Service worker: network sniffing, per-tab media list, badge, offscreen lifecycle, message routing, saving offscreen results |
+| `popup.html` / `popup.js` | UI: filters, list with checkboxes, download/record/stop buttons, one-shot page scan |
 | `offscreen.html` / `offscreen.js` | Long jobs: HLS VOD download+merge, live HLS capture, tab recording via `MediaRecorder` |
-| `hls.js` | Pure m3u8 parser (no DOM/chrome APIs), usable from offscreen and Node tests |
-| `test/hls.test.js` | Parser tests |
+| `media.js` | Pure helpers: `classify`, `cleanUrl`, `addItem`, `safeName`, `srcsetBest`, `mergeItems` |
+| `hls.js` | Pure m3u8 parser + ordered download pool: `parse`, `pickBest`, `fetchInOrder` |
+| `test/media.test.js`, `test/hls.test.js` | Node tests for the pure modules |
+| `README.md` | Install + manual test checklist |
 
-No persistent content script: the popup injects a one-shot scan function with `chrome.scripting.executeScript`.
+Pure modules never touch `chrome.*` or the DOM. No persistent content script: the popup injects a
+one-shot scan function with `chrome.scripting.executeScript`.
 
 ## Permissions
 
 `webRequest`, `downloads`, `scripting`, `activeTab`, `offscreen`, `tabCapture`, `storage`; host permission `<all_urls>`.
 
-## Data model
+## Data model (`chrome.storage.session`)
 
-Stored in `chrome.storage.session` under key `tab:<tabId>` (survives service-worker restarts, cleared on browser exit):
+- `tab:<tabId>` → array of `{ url, kind: 'image'|'video'|'audio'|'hls', mime, size /* bytes|null */ }`, oldest first, max 500.
+- `status` → `{ recording: bool, live: bool }`.
+- `lastError` → string or null.
 
-```js
-{ url, kind: 'image' | 'video' | 'audio' | 'hls', mime, size /* bytes or null */ }
-```
+## Flow 1 — Detection (background)
 
-Plus `lastError` (string or null) for surfacing failures on next popup open.
-
-## Flow 1 — Detection
-
-1. `background.js` listens to `chrome.webRequest.onResponseStarted` for `<all_urls>`.
-2. Classify each response by `Content-Type` header, falling back to URL extension:
-   - `image/*` or `.jpg .jpeg .png .gif .webp .avif .svg` → `image`
-   - `video/*` (except `video/mp2t`) or `.mp4 .webm .mov .mkv` → `video`
-   - `audio/*` or `.mp3 .m4a .aac .ogg .wav .opus` → `audio`
-   - `application/vnd.apple.mpegurl`, `application/x-mpegurl`, or `.m3u8` → `hls`
-   - Segment noise (`.ts`, `.m4s`, `video/mp2t`) → ignored.
-   - Anything else → ignored.
-3. `size` from `Content-Length` header when present.
-4. Append to `tab:<tabId>` if URL not already present. A `main_frame` request for the tab clears its list first.
-5. `tabs.onRemoved` deletes the tab's key.
+1. `webRequest.onResponseStarted` for `<all_urls>` with `responseHeaders`. Ignore `tabId < 0` (extension's own fetches) and `statusCode >= 400`.
+2. A `main_frame` response clears that tab's list.
+3. `classify(url, contentType)`: HLS by MIME or `.m3u8`; segments (`video/mp2t`, `video/iso.segment`, `.ts`, `.m4s`) → ignored; then `image/*|video/*|audio/*`; then extension (`jpg jpeg png gif webp avif svg` / `mp4 webm mov mkv` / `mp3 m4a aac ogg wav opus`); else ignored.
+4. `size` = total from `Content-Range` (206 responses) else `Content-Length` else null. Images under 2 KB are ignored (icons, pixels).
+5. URL stored through `cleanUrl` (drops `bytestart`/`byteend` params so IG/FB byte-range pieces become one full-file entry; other params byte-identical).
+6. `addItem` dedupes by URL and keeps the newest 500. All storage read-modify-writes go through one serial queue.
+7. `tabs.onRemoved` deletes the tab's key.
 
 ## Flow 2 — Popup
 
-1. On open: get active tab, read `tab:<tabId>` from background, and inject a scan function that returns URLs from:
-   `<img src>` / `currentSrc`, `srcset` (all candidates), `<video src>` / `<source src>` / `poster`,
-   `<meta property="og:image|og:video">`, computed `background-image: url(...)`.
-2. Merge network + DOM results, dedupe by URL. DOM-only items have `size: null`.
-3. `blob:` / `data:` URLs from `<video>` are not listed as downloadable; if any `<video>` has a `blob:` src,
-   show a hint: "Video uses a stream player — use Record tab".
-4. UI: filter tabs (All / Images / Videos / Streams — audio falls under Videos), grid of cards
-   (thumbnail for images, type label for others, size, checkbox), Select all, Download selected,
-   Record tab / Stop recording, and the `lastError` banner if set (dismissible, clears it).
-5. HLS cards: a live playlist shows "Record live"; a VOD playlist is downloadable like any other item.
-   Live/VOD is determined when the popup opens by fetching the playlist and running the parser.
+1. Reads `tab:<id>`, `status`, `lastError` straight from `storage.session`; injects `scanPage` into the tab (fails silently on `chrome://` pages).
+2. `scanPage` returns `{ found: [{url, kind}], srcsets, base, blobVideo }` from `<img>/<video>/<audio>/<source>` (`currentSrc`/`src`/`poster`), `srcset` attributes, `og:image`/`og:video` meta, computed `background-image`.
+3. `mergeItems(net, scan)`: network items newest first (they carry size), then page items (`classify(url) ?? tag kind`), then the largest candidate of each srcset. Only `http(s)` URLs, deduped after `cleanUrl`.
+4. UI: filter buttons with counts (All / Images / Videos incl. audio / Streams), grid of cards (image thumbnail or type label, filename, size, checkbox), Select all (visible items), Download N, Record tab ⇄ Stop recording, Stop live (when `status.live`), `lastError` banner (dismiss → background clears it), hint when a `<video>` plays a `blob:` URL.
+5. Page-derived strings only go into the DOM via `textContent`/properties, never `innerHTML`.
 
 ## Flow 3 — Downloads
 
-- Direct files (`image`/`video`/`audio`): `chrome.downloads.download({ url })` — continues after popup closes.
-- HLS VOD: popup sends `{ type: 'hls', url }` to background → background ensures offscreen document → offscreen job.
-- Offscreen cannot call `chrome.downloads`; it creates a blob URL and sends `{ type: 'save', url, filename }`
-  to background, which calls `chrome.downloads.download`. Blob URL revoked after the download completes.
+- `image`/`video`/`audio`: popup calls `chrome.downloads.download({ url, saveAs: false })`; errors collected and shown in the banner.
+- `hls`: popup sends `{ type: 'hls', url, name }` to background → offscreen.
+- Offscreen cannot call `chrome.downloads`: it makes a blob URL and sends `{ type: 'save', url, filename }`; background downloads it and asks offscreen to revoke the blob URL when the download leaves `in_progress`.
+- `name` = `safeName(tab.title)` (Windows-forbidden chars → `_`, trimmed dots/spaces, 100 code points max, fallback `norn`).
 
-## Flow 4 — HLS VOD (offscreen)
+## Flow 4 — HLS (offscreen)
 
-1. Fetch playlist text; `parse(text, baseUrl)`.
-2. If master: pick variant with highest `BANDWIDTH`, fetch and parse that media playlist.
-3. If any segment key has `METHOD` ≠ `NONE` → fail with "Encrypted stream — use Record tab".
-4. Download init segment (`EXT-X-MAP`) if present, then segments with concurrency 6, 3 retries each.
-5. Concatenate in order into one `Blob`. Extension: `.mp4` if `EXT-X-MAP` present (fMP4), else `.ts`.
-6. Report progress to background → badge text `NN%`. Clear badge when done.
-7. `ponytail:` whole file held as a Blob in memory; Chrome spills large blobs to disk, upgrade to
-   File System Access streaming if multi-GB streams matter.
+1. Fetch + `parse`; if master, `pickBest` (highest `BANDWIDTH`) and parse that media playlist.
+2. `unsupported` set (encrypted / byte-range) → error "… — use Record tab instead".
+3. `ended` (has `EXT-X-ENDLIST`) → VOD; otherwise → live.
+4. VOD: `fetchInOrder` segments, 6 in flight, each fetch retried 3× (500 ms, 1 s backoff); stops scheduling after the first failure. Progress → badge `NN%`. Prepend `EXT-X-MAP` init if present. Save as `.mp4` if init present (fMP4) else `.ts`.
+5. Live: `status.live = true`, badge `LIVE`. Loop: download segments with `seq` > last seen, sleep `TARGETDURATION` s (2 s if missing), re-fetch playlist; ends on Stop or `EXT-X-ENDLIST`. Whatever was captured is saved even when the loop fails.
+6. `ponytail:` the whole file is one in-memory Blob; stream to disk if multi-GB matters.
 
-## Flow 5 — Live HLS (offscreen)
+## Flow 5 — Tab recording
 
-1. Same variant selection as VOD.
-2. Loop: fetch media playlist, download segments with media sequence > last seen, append in order,
-   sleep `TARGETDURATION` seconds. Badge `LIVE`.
-3. Stops when user presses Stop (popup → background → offscreen) or playlist gains `EXT-X-ENDLIST`.
-4. Saves as in VOD.
+1. Popup click → `chrome.tabCapture.getMediaStreamId({ targetTabId })` in the popup (user gesture) → `{ type: 'record', streamId, name }` → background → offscreen.
+2. Offscreen: `getUserMedia` tab audio+video (caps 1920×1080 @30 fps), route audio to an `AudioContext` so the tab stays audible, `MediaRecorder` with first supported of `video/mp4;codecs=avc1,mp4a.40.2`, `video/webm;codecs=vp9,opus`, `video/webm`. Badge `REC`.
+3. Stop button, or the captured tab closing, stops the recorder and saves.
+4. One recording at a time. DRM content records black — out of scope.
 
-## Flow 6 — Tab recording
+## Messaging
 
-1. Popup "Record tab" → background calls `chrome.tabCapture.getMediaStreamId({ targetTabId })`
-   (allowed because the popup was opened by user action) → passes id to offscreen.
-2. Offscreen: `getUserMedia` with `chromeMediaSource: 'tab'` for audio+video; route audio to an
-   `AudioContext` destination so the tab stays audible; `MediaRecorder` with `video/mp4` if
-   `MediaRecorder.isTypeSupported`, else `video/webm`. Badge `REC`.
-3. Stop → collect chunks → save.
-4. DRM content records black — out of scope.
-
-## State shared with popup
-
-Background keeps `{ recording: bool, live: url|null, jobs: number }` in `storage.session` key `status`
-so the popup can show Stop buttons correctly after being reopened.
+`chrome.runtime.sendMessage` everywhere. Messages for offscreen carry `target: 'offscreen'`. Every
+receiving listener calls `reply()` immediately (ack) so senders' promises resolve; results travel as
+separate messages. Popup → background: `hls`, `record`, `stop {what: 'record'|'live'}`, `clearError`.
+Offscreen → background: `progress {text}`, `status {patch}`, `save {url, filename}`, `error {message}`.
+Background → offscreen: `hls`, `record`, `stop`, `revoke {url}`.
 
 ## Error handling
 
-- Segment fetch: 3 retries, then the job fails.
-- Any job failure or `chrome.downloads` error: set `lastError`, badge `!`. Popup shows banner on next open.
-- Non-OK HTTP (403, CORS) surfaces the status in the error text.
+- Segment fetch: 3 attempts, then the job fails; non-OK HTTP reported as `HTTP <status> for <url>`.
+- Any job failure or save failure: `lastError` set, badge `!`; popup shows the banner until dismissed.
+- `stop` when no offscreen document exists: background resets `status`.
 
 ## Testing
 
-- `test/hls.test.js` with `node --test`:
-  master vs media detection, best variant by bandwidth, relative URL resolution,
-  `EXT-X-MAP` init segment, `EXT-X-KEY` method, `EXT-X-ENDLIST` → VOD vs live,
-  `EXT-X-MEDIA-SEQUENCE`, `EXT-X-TARGETDURATION`.
-- Manual checklist in `README.md`: load unpacked, images page, direct mp4, public HLS VOD test stream,
-  public live HLS test stream, tab recording with audio audible, error banner on a 403.
+- `node --test`: `classify`, `cleanUrl`, `addItem`, `safeName`, `srcsetBest`, `mergeItems`, `parse`, `pickBest`, `fetchInOrder`.
+- Manual checklist in `README.md`: load unpacked, image page, direct mp4, HLS VOD (TS and fMP4), live HLS + Stop, tab recording with audio audible, tab closed mid-recording, error banner.
+
+## Revisions (during planning)
+
+- Added `media.js` (pure, tested) for classification, URL cleanup, filenames, srcset, merging.
+- Live vs VOD is decided by offscreen after resolving the playlist; the popup no longer fetches playlists. One "Download" path for all streams; "Stop live" appears while a live capture runs.
+- `status.live` is a boolean; `jobs` counter dropped (unused).
+- Byte-range playlists refused like encrypted ones; error responses (≥ 400) not listed; list capped at 500.
