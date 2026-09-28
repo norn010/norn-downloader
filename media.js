@@ -123,12 +123,15 @@ export function pageVideos(texts) {
       facebook(node.id, url(false), url(true));
     }
     if (code && Array.isArray(node.video_versions)) {
+      // story versions carry no size of their own; the item's original_width/height describe them
+      const area = v => (v.width ?? 0) * (v.height ?? 0);
       const best = node.video_versions
         .filter(v => typeof v?.url === 'string')
-        .reduce((a, b) => (!a || b.width * b.height > a.width * a.height ? b : a), null);
+        .reduce((a, b) => (!a || area(b) > area(a) ? b : a), null);
       if (best) {
-        const hd = Math.min(best.width, best.height) >= 720;
-        out.push({ site: 'instagram', id: code, sd: hd ? null : best.url, hd: hd ? best.url : null });
+        const hd = Math.min(best.width ?? node.original_width, best.height ?? node.original_height) >= 720;
+        const pk = typeof node.pk === 'string' ? node.pk : null;
+        out.push({ site: 'instagram', id: code, pk, sd: hd ? null : best.url, hd: hd ? best.url : null });
       }
     }
   };
@@ -159,10 +162,17 @@ const hostIs = (url, re) => {
 const FACEBOOK = /(^|\.)facebook\.com$/;
 const INSTAGRAM = /(^|\.)instagram\.com$/;
 
-// The video a page is about: Facebook /reel/<id>, /videos/<id>, ?v=<id>; Instagram /p|reel|reels|tv/<code>.
-// null anywhere else.
+// The video a page is about: Facebook /reel/<id>, /videos/<id>, ?v=<id>; Instagram /p|reel|reels|tv/<code>,
+// or a story's number in /stories/<user>/<number>/ (highlights not covered). null anywhere else.
 export function videoIdFromUrl(url) {
-  if (hostIs(url, INSTAGRAM)) return new URL(url).pathname.match(/^\/(?:p|reels?|tv)\/([A-Za-z0-9_-]+)/)?.[1] ?? null;
+  if (hostIs(url, INSTAGRAM)) {
+    const path = new URL(url).pathname;
+    return (
+      path.match(/^\/(?:p|reels?|tv)\/([A-Za-z0-9_-]+)/)?.[1] ??
+      path.match(/^\/stories\/(?!highlights\/)[^/]+\/(\d+)/)?.[1] ??
+      null
+    );
+  }
   if (!hostIs(url, FACEBOOK)) return null;
   const u = new URL(url);
   const v = u.searchParams.get('v');
@@ -178,10 +188,10 @@ export function pageVideoItems(texts, pageUrl) {
     kind: 'video',
     size: null,
     label: `${q.toUpperCase()} · with sound`,
-    filename: `${v.site}-${v.id}-${q}.mp4`,
+    filename: `${v.site}-${id ?? v.id}-${q}.mp4`,
   });
   return pageVideos(texts)
-    .filter(v => !id || v.id === id)
+    .filter(v => !id || v.id === id || v.pk === id)
     .flatMap(v => [v.hd && item(v, 'hd'), v.sd && item(v, 'sd')])
     .filter(i => i && /^https?:/.test(i.url));
 }

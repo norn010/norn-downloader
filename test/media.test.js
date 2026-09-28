@@ -174,10 +174,42 @@ test('pageVideos merges both Facebook shapes per id and skips blocks that are no
 
 test('pageVideos reads Instagram video_versions: largest version, one entry per video, carousel children under the post code', () => {
   assert.deepEqual(pageVideos([IG]), [
-    { site: 'instagram', id: 'AbCdEfGhIjK', sd: null, hd: 'https://instagram.fbkk.test/v/t16/a.mp4?efg=1' },
-    { site: 'instagram', id: 'CAROUSEL1', sd: null, hd: 'https://instagram.fbkk.test/c1.mp4' },
-    { site: 'instagram', id: 'CAROUSEL1', sd: 'https://instagram.fbkk.test/c2.mp4', hd: null },
+    { site: 'instagram', id: 'AbCdEfGhIjK', pk: '1', sd: null, hd: 'https://instagram.fbkk.test/v/t16/a.mp4?efg=1' },
+    { site: 'instagram', id: 'CAROUSEL1', pk: '2', sd: null, hd: 'https://instagram.fbkk.test/c1.mp4' },
+    { site: 'instagram', id: 'CAROUSEL1', pk: '3', sd: 'https://instagram.fbkk.test/c2.mp4', hd: null },
   ]);
+});
+
+// Instagram story (verified 2026-09-28): items under reels_media, matched by pk (the number in the URL);
+// video_versions carry no width/height, the item's original_width/height do.
+const IG_STORY = JSON.stringify({ require: [[{ __bbox: { result: { data: { xdt_api__v1__feed__reels_media: { reels_media: [{
+  user: { username: 'someone' },
+  items: [
+    { id: '3000000000000000105_2000000001', pk: '3000000000000000105', code: 'DXs1', media_type: 2, product_type: 'story',
+      original_width: 720, original_height: 1280,
+      video_versions: [{ type: 101, url: 'https://instagram.fbkk.test/s/one.mp4' }, { type: 102, url: 'https://instagram.fbkk.test/s/one.mp4?v=2' }] },
+    { id: '3000000000000000106_2000000001', pk: '3000000000000000106', code: 'DXs2', media_type: 2, product_type: 'story',
+      original_width: 480, original_height: 854, video_versions: [{ type: 101, url: 'https://instagram.fbkk.test/s/two.mp4' }] },
+    { id: '3000000000000000107_2000000001', pk: '3000000000000000107', code: 'DXs3', media_type: 1, product_type: 'story',
+      image_versions2: { candidates: [{ url: 'https://instagram.fbkk.test/s/photo.jpg' }] } },
+  ],
+}] } } } } }]] });
+
+test('pageVideos reads Instagram stories: pk kept, size from original_width/height when versions have none', () => {
+  assert.deepEqual(pageVideos([IG_STORY]), [
+    { site: 'instagram', id: 'DXs1', pk: '3000000000000000105', sd: null, hd: 'https://instagram.fbkk.test/s/one.mp4' },
+    { site: 'instagram', id: 'DXs2', pk: '3000000000000000106', sd: 'https://instagram.fbkk.test/s/two.mp4', hd: null },
+  ]);
+});
+
+test('pageVideoItems: the story in the URL only, named by its number', () => {
+  assert.deepEqual(pageVideoItems([IG_STORY], 'https://www.instagram.com/stories/someone/3000000000000000105/'), [
+    {
+      url: 'https://instagram.fbkk.test/s/one.mp4', kind: 'video', size: null,
+      label: 'HD · with sound', filename: 'instagram-3000000000000000105-hd.mp4',
+    },
+  ]);
+  assert.deepEqual(pageVideoItems([IG_STORY], 'https://www.instagram.com/stories/someone/1/'), []);
 });
 
 test('videoIdFromUrl finds Facebook video ids and Instagram post codes only', () => {
@@ -192,7 +224,9 @@ test('videoIdFromUrl finds Facebook video ids and Instagram post codes only', ()
   assert.equal(videoIdFromUrl('https://www.instagram.com/reels/C_x-9/'), 'C_x-9');
   assert.equal(videoIdFromUrl('https://www.instagram.com/tv/B1/'), 'B1');
   assert.equal(videoIdFromUrl('https://www.instagram.com/'), null);
-  assert.equal(videoIdFromUrl('https://www.instagram.com/stories/someone/123/'), null);
+  assert.equal(videoIdFromUrl('https://www.instagram.com/stories/someone/3000000000000000105/'), '3000000000000000105');
+  assert.equal(videoIdFromUrl('https://www.instagram.com/stories/someone/'), null);
+  assert.equal(videoIdFromUrl('https://www.instagram.com/stories/highlights/17912345678901234/'), null);
   assert.equal(videoIdFromUrl('https://www.youtube.com/watch?v=kJiHgFeDcBa'), null);
   assert.equal(videoIdFromUrl('https://example.com/reel/1000000000000001'), null);
   assert.equal(videoIdFromUrl(undefined), null);
