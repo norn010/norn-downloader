@@ -25,8 +25,13 @@ async function get(url, signal, read = res => res.arrayBuffer()) {
 const getPlaylist = async (url, signal) => parse(...(await get(url, signal, async res => [await res.text(), res.url])));
 
 // Offscreen can't use chrome.downloads; background saves the blob URL and asks us to revoke it after.
-const save = (parts, name, ext) =>
-  send({ type: 'save', url: URL.createObjectURL(new Blob(parts)), filename: `${name}.${ext}` });
+// Chrome picks the file extension from the blob's type; an untyped blob is saved as .txt.
+const MIME = { mp4: 'video/mp4', ts: 'video/mp2t', webm: 'video/webm' };
+const saveAs = (parts, filename) => {
+  const type = MIME[filename.split('.').pop()] ?? 'application/octet-stream';
+  return send({ type: 'save', url: URL.createObjectURL(new Blob(parts, { type })), filename });
+};
+const save = (parts, name, ext) => saveAs(parts, `${name}.${ext}`);
 
 // Master playlist → best variant. Returns the media playlist and its URL.
 async function mediaPlaylist(url) {
@@ -127,8 +132,7 @@ function stop(what) {
 // A single file fetched by the extension (so declarativeNetRequest headers apply), then saved like HLS results.
 // ponytail: whole file in memory and the 30 s request timeout covers the body too; fine for short-video sites.
 async function file(url, filename) {
-  const body = await get(url);
-  await send({ type: 'save', url: URL.createObjectURL(new Blob([body])), filename });
+  await saveAs([await get(url)], filename);
 }
 
 const jobs = {
