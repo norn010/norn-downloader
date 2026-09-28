@@ -78,6 +78,8 @@ The loaded page's `<script type="application/json">` data carries ready-made pro
 a re-fetch of the page URL does not contain them, so they are read from the loaded page).
 
 Verified logged in too: a directly loaded reel URL carries the data; a reel reached by clicking or scrolling inside Facebook does not.
+Logged in, Facebook may instead (or also) send the newer shape `{…,"progressive_urls":[{"progressive_url":…,"metadata":{"quality":"SD"|"HD"}}],…,"id":"<video id>"}`
+(the id is a later sibling key). `pageVideos` reads both shapes and merges them per id; all such URLs tested carried sound.
 
 1. The popup asks background (`fbItems {tabId, url}`, answered asynchronously). Background injects `facebookData()` into the tab, which returns the text of JSON scripts containing `browser_native`. Doing this in background means a background tab (step 5) is always closed, even if the popup closes. Results are cached per video id in `storage.session` (`fb:<id>`).
 2. `pageVideoItems(data, tab.url)`: only the video whose id is in a facebook.com URL (`/reel/<id>`, `/videos/<id>`, `?v=<digits>`), never the preloaded next reels; else (no id) all found. HD then SD, labelled "HD · with sound" / "SD · with sound", named `facebook-<id>-hd|sd.mp4`; http(s) only.

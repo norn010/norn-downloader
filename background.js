@@ -110,7 +110,7 @@ const handlers = {
 function facebookData() {
   return [...document.querySelectorAll('script[type="application/json"]')]
     .map(s => s.textContent)
-    .filter(t => t.includes('browser_native'))
+    .filter(t => t.includes('browser_native') || t.includes('"progressive_urls"'))
     .join('\n');
 }
 

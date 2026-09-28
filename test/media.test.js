@@ -132,6 +132,28 @@ test('pageVideos reads Facebook progressive URLs, unescapes them, one entry per 
   assert.deepEqual(pageVideos('<html>nothing here</html>'), []);
 });
 
+// Newer shape Facebook sends when logged in (verified 2026-09-28): progressive_urls with quality labels,
+// the video id as a later sibling key; nested objects may carry their own "id".
+const FB_NEW = String.raw`{"data":{"videoDeliveryResponseFragment":{"videoDeliveryResponseResult":{"dash_manifests":[{"manifest_xml":"<MPD>[x]{y}</MPD>"}],"dash_manifest_urls":[],"progressive_urls":[{"progressive_url":"https:\/\/video.fbcdn.test\/n\/sd.mp4?tag=progressive_h264-basic-gen2_360p","failure_reason":null,"metadata":{"quality":"SD"}},{"progressive_url":"https:\/\/video.fbcdn.test\/n\/hd.mp4?tag=progressive_h264-basic-gen2_720p","failure_reason":null,"metadata":{"quality":"HD"}}],"hls_playlist_urls":[{"url":"x","metadata":{"id":"999"}}],"id":"1000000000000001"}}},"next":{"progressive_urls":[{"progressive_url":"https:\/\/video.fbcdn.test\/n\/sd2.mp4?tag=sve_sd","failure_reason":null,"metadata":{"quality":"SD"}}],"id":"1000000000000003"},"broken":{"progressive_urls":[{"progressive_url":"https:\/\/x`;
+
+test('pageVideos also reads the newer progressive_urls shape (logged-in Facebook)', () => {
+  assert.deepEqual(pageVideos(FB_NEW), [
+    {
+      id: '1000000000000001',
+      sd: 'https://video.fbcdn.test/n/sd.mp4?tag=progressive_h264-basic-gen2_360p',
+      hd: 'https://video.fbcdn.test/n/hd.mp4?tag=progressive_h264-basic-gen2_720p',
+    },
+    { id: '1000000000000003', sd: 'https://video.fbcdn.test/n/sd2.mp4?tag=sve_sd', hd: null },
+  ]);
+});
+
+test('pageVideos merges both shapes for the same video into one entry', () => {
+  const both = pageVideos(FB + FB_NEW);
+  assert.equal(both.filter(v => v.id === '1000000000000001').length, 1);
+  assert.deepEqual(both.find(v => v.id === '1000000000000001'), { id: '1000000000000001', sd: SD1, hd: HD1 });
+  assert.deepEqual(both.find(v => v.id === '1000000000000003').sd, 'https://video.fbcdn.test/n/sd2.mp4?tag=sve_sd');
+});
+
 test('videoIdFromUrl finds Facebook reel/video ids only', () => {
   assert.equal(videoIdFromUrl('https://www.facebook.com/reel/1000000000000001'), '1000000000000001');
   assert.equal(videoIdFromUrl('https://www.facebook.com/reel/1000000000000001/?s=ifu'), '1000000000000001');

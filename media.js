@@ -105,10 +105,67 @@ const FB_VIDEO =
 
 export function pageVideos(text) {
   const out = new Map();
-  for (const [, sd, hd, id] of text.matchAll(FB_VIDEO)) {
-    if (!out.has(id)) out.set(id, { id, sd: JSON.parse(sd), hd: JSON.parse(hd) });
+  const add = (id, sd, hd) => {
+    const v = out.get(id) ?? out.set(id, { id, sd: null, hd: null }).get(id);
+    v.sd ??= sd;
+    v.hd ??= hd;
+  };
+  for (const [, sd, hd, id] of text.matchAll(FB_VIDEO)) add(id, JSON.parse(sd), JSON.parse(hd));
+  // Newer shape (logged in): {…,"progressive_urls":[{"progressive_url":"…","metadata":{"quality":"HD"|"SD"}}],…,"id":"…"}
+  for (const m of text.matchAll(/"progressive_urls":\[/g)) {
+    const start = m.index + m[0].length - 1;
+    const end = jsonEnd(text, start);
+    const id = end > 0 && siblingId(text, end);
+    if (!id) continue;
+    let list;
+    try {
+      list = JSON.parse(text.slice(start, end));
+    } catch {
+      continue;
+    }
+    const url = hd => list.find(e => (e?.metadata?.quality === 'HD') === hd)?.progressive_url ?? null;
+    add(id, url(false), url(true));
   }
   return [...out.values()];
+}
+
+// Index just past the JSON array/object opening at `i` (strings respected), or -1 if it never closes.
+function jsonEnd(text, i) {
+  let depth = 0;
+  for (let j = i; j < text.length; j++) {
+    const c = text[j];
+    if (c === '"') j = stringEnd(text, j);
+    else if (c === '[' || c === '{') depth++;
+    else if ((c === ']' || c === '}') && --depth === 0) return j + 1;
+  }
+  return -1;
+}
+
+// Index of the closing quote of the string opening at `i`.
+function stringEnd(text, i) {
+  let j = i + 1;
+  while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
+  return j;
+}
+
+// The "id" of the object we are inside at `i`, found among its later keys (nested objects skipped).
+function siblingId(text, i) {
+  let depth = 0;
+  for (let j = i; j < text.length; j++) {
+    const c = text[j];
+    if (c === '"') {
+      if (depth === 0) {
+        const id = text.slice(j, j + 40).match(/^"id":"(\d+)"/);
+        if (id) return id[1];
+      }
+      j = stringEnd(text, j);
+    } else if (c === '[' || c === '{') depth++;
+    else if (c === ']' || c === '}') {
+      if (depth === 0) return null; // parent closed without an id
+      depth--;
+    }
+  }
+  return null;
 }
 
 const hostIs = (url, re) => {
