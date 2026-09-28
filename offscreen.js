@@ -79,12 +79,46 @@ async function live(p, url, name) {
   }
 }
 
+let recorder = null;
+
+async function record(streamId, name) {
+  if (recorder) throw new Error('Already recording a tab');
+  const tab = { chromeMediaSource: 'tab', chromeMediaSourceId: streamId };
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { mandatory: tab },
+    // calibration knob: Chrome captures tabs small unless given max sizes
+    video: { mandatory: { ...tab, maxWidth: 1920, maxHeight: 1080, maxFrameRate: 30 } },
+  });
+  const audio = new AudioContext();
+  audio.createMediaStreamSource(stream).connect(audio.destination); // capturing mutes the tab; play it back
+  const chunks = [];
+  // VP8/Opus: every Chrome build encodes it. avc1 and VP9 pass isTypeSupported yet recorded nothing in testing.
+  // calibration knob: videoBitsPerSecond (Chrome's default ~2.5 Mbps looks blocky at 1080p)
+  recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8,opus', videoBitsPerSecond: 8e6 });
+  recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
+  recorder.onerror = e => send({ type: 'error', message: `Recording failed: ${e.error?.message ?? 'unknown error'}` });
+  recorder.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());
+    audio.close();
+    recorder = null;
+    await send({ type: 'status', patch: { recording: false } });
+    if (chunks.length) await save(chunks, name, 'webm'); // never hand the user an empty file
+  };
+  // tab closed or navigated to an uncapturable page → finish and save
+  stream.getVideoTracks()[0].onended = () => recorder?.state === 'recording' && recorder.stop();
+  recorder.start();
+  await send({ type: 'status', patch: { recording: true } });
+}
+
 function stop(what) {
-  if (what === 'live') liveStops.forEach(s => s());
+  if (what === 'record') {
+    if (recorder?.state === 'recording') recorder.stop();
+  } else liveStops.forEach(s => s());
 }
 
 const jobs = {
   hls: m => hls(m.url, m.name),
+  record: m => record(m.streamId, m.name),
   stop: m => stop(m.what),
   revoke: m => URL.revokeObjectURL(m.url),
 };

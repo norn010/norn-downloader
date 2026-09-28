@@ -89,7 +89,7 @@ one-shot scan function with `chrome.scripting.executeScript`.
 ## Flow 5 — Tab recording
 
 1. Popup click → `chrome.tabCapture.getMediaStreamId({ targetTabId })` in the popup (user gesture) → `{ type: 'record', streamId, name }` → background → offscreen.
-2. Offscreen: `getUserMedia` tab audio+video (caps 1920×1080 @30 fps), route audio to an `AudioContext` so the tab stays audible, `MediaRecorder` with first supported of `video/mp4;codecs=avc1,mp4a.40.2`, `video/webm;codecs=vp9,opus`, `video/webm`. Badge `REC`.
+2. Offscreen: `getUserMedia` tab audio+video (caps 1920×1080 @30 fps), route audio to an `AudioContext` so the tab stays audible, `MediaRecorder` with `video/webm;codecs=vp8,opus` at 8 Mbps (avc1 and VP9 pass `isTypeSupported` but produced no data in testing; VP8 encodes in every Chrome build). A recorder error is reported; an empty recording is never saved. Badge `REC`.
 3. Stop button, or the captured tab closing, stops the recorder and saves.
 4. One recording at a time. DRM content records black — out of scope.
 
