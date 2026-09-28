@@ -1,4 +1,4 @@
-import { mergeItems, safeName } from './media.js';
+import { mergeItems, pageVideoItems, safeName } from './media.js';
 
 const $ = sel => document.querySelector(sel);
 
@@ -26,7 +26,12 @@ function scanPage() {
     }
   }
   const blobVideo = [...document.querySelectorAll('video')].some(v => (v.currentSrc || v.src).startsWith('blob:'));
-  return { found, srcsets, base: document.baseURI, blobVideo };
+  // Facebook's embedded page data, which holds ready-made MP4s with sound (parsed by pageVideoItems)
+  const fbJson = [...document.querySelectorAll('script[type="application/json"]')]
+    .map(s => s.textContent)
+    .filter(t => t.includes('browser_native'))
+    .join('\n');
+  return { found, srcsets, base: document.baseURI, blobVideo, fbJson };
 }
 
 const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -34,14 +39,16 @@ const key = `tab:${tab.id}`;
 const { [key]: net = [], status = {}, lastError } = await chrome.storage.session.get([key, 'status', 'lastError']);
 const name = safeName(tab.title);
 
-let scan = { found: [], srcsets: [], base: tab.url, blobVideo: false };
+let scan = { found: [], srcsets: [], base: tab.url, blobVideo: false, fbJson: '' };
 try {
   scan = (await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: scanPage }))[0].result ?? scan;
 } catch {
   // chrome:// pages, the Web Store, PDFs: network list only
 }
 
-const items = mergeItems(net, scan);
+const page = pageVideoItems(scan.fbJson, tab.url);
+const pageUrls = new Set(page.items.map(i => i.url));
+const items = [...page.items, ...mergeItems(net, scan).filter(i => !pageUrls.has(i.url))];
 const selected = new Set();
 let filter = 'all';
 
@@ -72,10 +79,12 @@ function card(item) {
   const thumb =
     item.kind === 'image'
       ? Object.assign(document.createElement('img'), { src: item.url, loading: 'lazy', alt: '' })
-      : Object.assign(document.createElement('div'), { textContent: item.kind.toUpperCase() });
+      : item.label // page-provided video: show its first frame
+        ? Object.assign(document.createElement('video'), { src: item.url, preload: 'metadata', muted: true })
+        : Object.assign(document.createElement('div'), { textContent: item.kind.toUpperCase() });
   thumb.classList.add('thumb');
   const meta = document.createElement('small');
-  meta.textContent = [fileName(item.url), fmtSize(item.size)].filter(Boolean).join(' · ');
+  meta.textContent = item.label ?? [fileName(item.url), fmtSize(item.size)].filter(Boolean).join(' · ');
   label.append(box, thumb, meta);
   return label;
 }
@@ -127,7 +136,7 @@ $('#download').onclick = async () => {
   for (const item of items.filter(i => selected.has(i.url))) {
     try {
       if (item.kind === 'hls') await chrome.runtime.sendMessage({ type: 'hls', url: item.url, name });
-      else await chrome.downloads.download({ url: item.url, saveAs: false });
+      else await chrome.downloads.download({ url: item.url, saveAs: false, ...(item.filename && { filename: item.filename }) });
     } catch (e) {
       errors.push(`${fileName(item.url)}: ${e.message}`);
     }
@@ -164,5 +173,6 @@ $('#dismiss').onclick = () => {
 };
 
 if (lastError) showError(lastError);
-$('#hint').hidden = !scan.blobVideo;
+$('#hint').hidden = !scan.blobVideo || page.items.length > 0;
+$('#reload').hidden = !page.missing;
 render();

@@ -70,6 +70,18 @@ one-shot scan function with `chrome.scripting.executeScript`.
 4. UI: filter buttons with counts (All / Images / Videos incl. audio / Streams), grid of cards (image thumbnail or type label, filename, size, checkbox), Select all (visible items), Download N, Record tab ⇄ Stop recording, Stop live (when `status.live`), `lastError` banner (dismiss → background clears it), hint when a `<video>` plays a `blob:` URL.
 5. Page-derived strings only go into the DOM via `textContent`/properties, never `innerHTML`.
 
+## Flow 2b — Facebook videos with sound (added after first release)
+
+Facebook plays reels as DASH (video-only pieces + separate audio), so sniffed pieces have no sound.
+The loaded page's `<script type="application/json">` data carries ready-made progressive MP4s with sound:
+`{"browser_native_sd_url":…,"browser_native_hd_url":…|null,"id":"<video id>"}` (verified on a real reel, logged out;
+a re-fetch of the page URL does not contain them, so they are read from the loaded page).
+
+1. `scanPage` returns the text of JSON scripts containing `browser_native` as `fbJson`.
+2. `pageVideoItems(fbJson, tab.url)`: the video whose id is in the URL (`/reel/<id>`, `/videos/<id>`, `?v=<digits>`), else all found; HD then SD, labelled "HD · with sound" / "SD · with sound", named `facebook-<id>-hd|sd.mp4`; http(s) only.
+3. These items go first in the popup, with a `<video preload=metadata>` thumbnail.
+4. If the page has such data but not for the URL's id (user scrolled to a reel Facebook fetched later), the popup asks to refresh the page.
+
 ## Flow 3 — Downloads
 
 - `image`/`video`/`audio`: popup calls `chrome.downloads.download({ url, saveAs: false })`; errors collected and shown in the banner.

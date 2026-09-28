@@ -96,3 +96,43 @@ export function mergeItems(net, scan) {
   }
   return [...out.values()];
 }
+
+// Facebook embeds a ready-made progressive MP4 (video + sound) per video in the page's JSON:
+// {"browser_native_sd_url":"…","browser_native_hd_url":"…"|null,"id":"…"}. Returns [{ id, sd, hd }], one per id.
+// ponytail: tied to Facebook's current key names; update this pattern when they change.
+const FB_VIDEO =
+  /"browser_native_sd_url":("(?:[^"\\]|\\.)*"|null),"browser_native_hd_url":("(?:[^"\\]|\\.)*"|null),"id":"(\d+)"/g;
+
+export function pageVideos(text) {
+  const out = new Map();
+  for (const [, sd, hd, id] of text.matchAll(FB_VIDEO)) {
+    if (!out.has(id)) out.set(id, { id, sd: JSON.parse(sd), hd: JSON.parse(hd) });
+  }
+  return [...out.values()];
+}
+
+// Numeric Facebook video id from /reel/<id>, /videos/<id> or ?v=<id>.
+export function videoIdFromUrl(url) {
+  try {
+    const u = new URL(url);
+    const v = u.searchParams.get('v');
+    return u.pathname.match(/\/(?:reel|videos)\/(\d+)/)?.[1] ?? (/^\d+$/.test(v) ? v : null);
+  } catch {
+    return null;
+  }
+}
+
+// Popup items for the video the page is about (the id in its URL, else every one found).
+// missing: the URL names a video the page source doesn't carry (Facebook fetched it after load) → reload.
+export function pageVideoItems(text, pageUrl) {
+  const all = pageVideos(text);
+  const id = videoIdFromUrl(pageUrl);
+  const mine = id ? all.filter(v => v.id === id) : all;
+  const items = mine
+    .flatMap(v => [
+      v.hd && { url: v.hd, kind: 'video', size: null, label: 'HD · with sound', filename: `facebook-${v.id}-hd.mp4` },
+      v.sd && { url: v.sd, kind: 'video', size: null, label: 'SD · with sound', filename: `facebook-${v.id}-sd.mp4` },
+    ])
+    .filter(i => i && /^https?:/.test(i.url));
+  return { items, missing: all.length > 0 && mine.length === 0 };
+}
