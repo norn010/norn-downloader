@@ -83,7 +83,7 @@ one-shot scan function with `chrome.scripting.executeScript`.
 2. `unsupported` set (encrypted / byte-range) → error "… — use Record tab instead".
 3. `ended` (has `EXT-X-ENDLIST`) → VOD; otherwise → live.
 4. VOD: `fetchInOrder` segments, 6 in flight, each fetch retried 3× (500 ms, 1 s backoff); stops scheduling after the first failure. Progress → badge `NN%`. Prepend `EXT-X-MAP` init if present. Save as `.mp4` if init present (fMP4) else `.ts`.
-5. Live: `status.live = true`, badge `LIVE`. Loop: download segments with `seq` > last seen, sleep `TARGETDURATION` s (2 s if missing), re-fetch playlist; ends on Stop or `EXT-X-ENDLIST`. Whatever was captured is saved even when the loop fails.
+5. Live: `status.live = true`, badge `LIVE`. Recording starts three segments from the live edge (`liveEdge`), not at the start of a DVR window. Loop: download segments with `seq` > last seen, sleep `TARGETDURATION` s (2 s if missing), re-fetch playlist; ends on Stop or `EXT-X-ENDLIST`. Whatever was captured is saved even when the loop fails.
 6. `ponytail:` the whole file is one in-memory Blob; stream to disk if multi-GB matters.
 
 ## Flow 5 — Tab recording

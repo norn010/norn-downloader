@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parse, pickBest, fetchInOrder } from '../hls.js';
+import { parse, pickBest, fetchInOrder, liveEdge } from '../hls.js';
 
 const BASE = 'https://cdn.test/v/master.m3u8?token=abc';
 const MASTER = [
@@ -62,6 +62,15 @@ test('encrypted and byte-range playlists are flagged unsupported', () => {
     parse(media('#EXTINF:6.0,', '#EXT-X-BYTERANGE:1000@0', 'all.ts'), BASE).unsupported,
     'Byte-range playlist',
   );
+});
+
+test('liveEdge: live capture starts three segments from the end, not at the start of the DVR window', () => {
+  const segs = n => Array.from({ length: n }, (_, i) => ({ url: `s${i}`, seq: 100 + i }));
+  const firstTaken = list => list.find(s => s.seq > liveEdge(list))?.seq;
+  assert.equal(firstTaken(segs(300)), 397);
+  assert.equal(firstTaken(segs(3)), 100);
+  assert.equal(firstTaken(segs(1)), 100);
+  assert.equal(liveEdge([]), -1);
 });
 
 const delay = ms => new Promise(r => setTimeout(r, ms));

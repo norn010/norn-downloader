@@ -40,6 +40,10 @@ export function parse(text, baseUrl) {
 // merge the audio playlist in if that matters.
 export const pickBest = variants => variants.reduce((a, b) => (b.bandwidth > a.bandwidth ? b : a));
 
+// Live playlists can hold a long DVR window; start recording three segments from the end, as players do.
+// Returns the seq to treat as "already seen" (-1 = take everything).
+export const liveEdge = segments => segments.at(-4)?.seq ?? -1;
+
 // get(url) for every url, at most `limit` in flight, results in input order.
 // After the first failure: no new fetches, no more onEach calls, and the promise rejects with it.
 export async function fetchInOrder(urls, get, onEach = () => {}, limit = 6) {

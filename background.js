@@ -30,3 +30,82 @@ chrome.webRequest.onResponseStarted.addListener(
 );
 
 chrome.tabs.onRemoved.addListener(tabId => serial(() => store.remove(tabKey(tabId))));
+
+// ---- Offscreen jobs, badge, saving ----
+
+const OFFSCREEN_JOBS = ['hls', 'record', 'stop'];
+
+const hasOffscreen = async () =>
+  (await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] })).length > 0;
+
+// ponytail: the offscreen document stays open once created; close it when idle if memory matters
+let creating = null;
+async function ensureOffscreen() {
+  if (await hasOffscreen()) return;
+  creating ??= chrome.offscreen
+    .createDocument({
+      url: 'offscreen.html',
+      reasons: ['BLOBS', 'USER_MEDIA'],
+      justification: 'Join HLS segments into one file and record tabs',
+    })
+    .finally(() => (creating = null));
+  await creating;
+}
+
+async function idleBadge() {
+  const { status = {} } = await store.get('status');
+  await chrome.action.setBadgeText({ text: status.recording ? 'REC' : status.live ? 'LIVE' : '' });
+}
+
+const setStatus = patch =>
+  serial(async () => {
+    const { status = {} } = await store.get('status');
+    await store.set({ status: { ...status, ...patch } });
+    await idleBadge();
+  });
+
+async function fail(message) {
+  await store.set({ lastError: message });
+  await chrome.action.setBadgeText({ text: '!' });
+}
+
+async function toOffscreen(msg) {
+  if (msg.type === 'stop' && !(await hasOffscreen())) return setStatus({ recording: false, live: false });
+  await ensureOffscreen();
+  await chrome.runtime.sendMessage({ ...msg, target: 'offscreen' });
+}
+
+// downloadId -> blob URL owned by offscreen; revoked once the file is written.
+// ponytail: lost if the worker restarts mid-download, the blob then lives until the offscreen doc closes
+const blobs = new Map();
+
+const handlers = {
+  progress: m => chrome.action.setBadgeText({ text: m.text }),
+  status: m => setStatus(m.patch),
+  error: m => fail(m.message),
+  async save(m) {
+    try {
+      blobs.set(await chrome.downloads.download({ url: m.url, filename: m.filename, saveAs: false }), m.url);
+    } catch (e) {
+      return fail(`Save failed: ${e.message}`);
+    }
+    await idleBadge();
+  },
+  async clearError() {
+    await store.set({ lastError: null });
+    await idleBadge();
+  },
+};
+
+chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+  reply(); // ack so the sender's promise resolves; results travel as separate messages
+  if (OFFSCREEN_JOBS.includes(msg.type)) toOffscreen(msg).catch(e => fail(e.message));
+  else handlers[msg.type]?.(msg);
+});
+
+chrome.downloads.onChanged.addListener(({ id, state }) => {
+  if (!blobs.has(id) || !state || state.current === 'in_progress') return;
+  // offscreen may already be gone, then so is the blob
+  chrome.runtime.sendMessage({ target: 'offscreen', type: 'revoke', url: blobs.get(id) }).catch(() => {});
+  blobs.delete(id);
+});
