@@ -79,11 +79,11 @@ a re-fetch of the page URL does not contain them, so they are read from the load
 
 Verified logged in too: a directly loaded reel URL carries the data; a reel reached by clicking or scrolling inside Facebook does not.
 
-1. The popup injects `facebookData()`, which returns the text of JSON scripts containing `browser_native`.
+1. The popup asks background (`fbItems {tabId, url}`, answered asynchronously). Background injects `facebookData()` into the tab, which returns the text of JSON scripts containing `browser_native`. Doing this in background means a background tab (step 5) is always closed, even if the popup closes. Results are cached per video id in `storage.session` (`fb:<id>`).
 2. `pageVideoItems(data, tab.url)`: only the video whose id is in a facebook.com URL (`/reel/<id>`, `/videos/<id>`, `?v=<digits>`), never the preloaded next reels; else (no id) all found. HD then SD, labelled "HD · with sound" / "SD · with sound", named `facebook-<id>-hd|sd.mp4`; http(s) only.
 3. These items go first in the popup, with a `<video preload=metadata>` thumbnail.
 4. On facebook.com, `hideFacebookPieces` drops every fbcdn video/audio response (DASH pieces: video-only or audio-only, often of the next reel). fbcdn images stay.
-5. If the URL names a video but the page doesn't carry it, a "Get HD with sound" button opens the URL in a muted inactive tab, waits for load (20 s limit), injects `facebookData()`, closes the tab and adds the items.
+5. If the URL names a video but the page doesn't carry it, background automatically opens the URL in a muted inactive tab, waits for load (20 s limit), injects `facebookData()`, closes the tab and returns the items. The popup shows "Getting this video with sound…" meanwhile, and an error suggesting Record tab if nothing is found.
 
 ## Flow 3 — Downloads
 

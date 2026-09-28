@@ -1,4 +1,4 @@
-import { hideFacebookPieces, mergeItems, pageVideoItems, safeName, videoIdFromUrl } from './media.js';
+import { hideFacebookPieces, mergeItems, safeName, videoIdFromUrl } from './media.js';
 
 const $ = sel => document.querySelector(sel);
 
@@ -29,63 +29,21 @@ function scanPage() {
   return { found, srcsets, base: document.baseURI, blobVideo };
 }
 
-// Runs inside the page: Facebook's embedded data, which holds ready-made MP4s with sound (see pageVideoItems).
-function facebookData() {
-  return [...document.querySelectorAll('script[type="application/json"]')]
-    .map(s => s.textContent)
-    .filter(t => t.includes('browser_native'))
-    .join('\n');
-}
-
-const inject = async (tabId, func) => (await chrome.scripting.executeScript({ target: { tabId }, func }))[0].result;
-
-// Facebook only embeds a reel's data when its URL is loaded directly, not when reached by clicking or
-// scrolling inside Facebook. Load the URL in a muted background tab, read the data, close the tab.
-// ponytail: if the popup closes mid-way the background tab stays open; move this to background.js if that bites
-async function facebookDataViaTab(url) {
-  const bg = await chrome.tabs.create({ url, active: false });
-  try {
-    await chrome.tabs.update(bg.id, { muted: true });
-    await new Promise((resolve, reject) => {
-      const done = () => {
-        clearTimeout(timer);
-        chrome.tabs.onUpdated.removeListener(onUpdated);
-        resolve();
-      };
-      const onUpdated = (id, info) => id === bg.id && info.status === 'complete' && done();
-      const timer = setTimeout(() => {
-        chrome.tabs.onUpdated.removeListener(onUpdated);
-        reject(new Error('Facebook took too long to load'));
-      }, 20_000);
-      chrome.tabs.onUpdated.addListener(onUpdated);
-      chrome.tabs.get(bg.id).then(t => t.status === 'complete' && done());
-    });
-    return await inject(bg.id, facebookData);
-  } finally {
-    chrome.tabs.remove(bg.id).catch(() => {});
-  }
-}
-
 const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 const key = `tab:${tab.id}`;
 const { [key]: net = [], status = {}, lastError } = await chrome.storage.session.get([key, 'status', 'lastError']);
 const name = safeName(tab.title);
 
 let scan = { found: [], srcsets: [], base: tab.url, blobVideo: false };
-let fbData = '';
 try {
-  scan = (await inject(tab.id, scanPage)) ?? scan;
-  fbData = (await inject(tab.id, facebookData)) ?? '';
+  scan = (await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: scanPage }))[0].result ?? scan;
 } catch {
   // chrome:// pages, the Web Store, PDFs: network list only
 }
 
-const pageItems = pageVideoItems(fbData, tab.url);
-const pageUrls = new Set(pageItems.map(i => i.url));
-const items = [
-  ...pageItems,
-  ...hideFacebookPieces(mergeItems(net, scan), tab.url).filter(i => !pageUrls.has(i.url)),
-];
+const fbVideoPage = videoIdFromUrl(tab.url) !== null;
+let fbLoading = fbVideoPage; // background fetches the with-sound files; see the fbItems request below
+const items = hideFacebookPieces(mergeItems(net, scan), tab.url);
 const selected = new Set();
 let filter = 'all';
 
@@ -144,7 +102,8 @@ function render() {
     className: 'empty',
     textContent: 'Nothing found yet. Play or scroll the page, then reopen.',
   });
-  $('#grid').replaceChildren(...(list.length ? list.map(card) : [empty]));
+  $('#grid').replaceChildren(...(list.length ? list.map(card) : fbLoading ? [] : [empty]));
+  $('#fbLoading').hidden = !fbLoading;
   sync();
 }
 
@@ -209,24 +168,14 @@ $('#dismiss').onclick = () => {
   chrome.runtime.sendMessage({ type: 'clearError' });
 };
 
-// A Facebook video whose with-sound files aren't in this page (reached by clicking/scrolling inside Facebook).
-$('#fbFetch').hidden = !videoIdFromUrl(tab.url) || pageItems.length > 0;
-$('#fbFetch').onclick = async () => {
-  $('#fbFetch').disabled = true;
-  $('#fbFetch').textContent = 'Loading…';
-  try {
-    const found = pageVideoItems(await facebookDataViaTab(tab.url), tab.url);
-    if (!found.length) throw new Error("Couldn't find this video's file with sound");
-    items.unshift(...found);
-    $('#fbFetch').hidden = true;
-    render();
-  } catch (e) {
-    showError(e.message);
-    $('#fbFetch').disabled = false;
-    $('#fbFetch').textContent = 'Get HD with sound';
-  }
-};
-
 if (lastError) showError(lastError);
-$('#hint').hidden = !scan.blobVideo || pageItems.length > 0 || videoIdFromUrl(tab.url) !== null;
+$('#hint').hidden = !scan.blobVideo || fbVideoPage;
+render();
+
+// Facebook with-sound MP4s (HD/SD) go on top; background may open a hidden tab to get them (a few seconds).
+const fb = await chrome.runtime.sendMessage({ type: 'fbItems', tabId: tab.id, url: tab.url }).catch(e => ({ error: e.message }));
+fbLoading = false;
+const known = new Set(items.map(i => i.url));
+items.unshift(...(fb?.items ?? []).filter(i => !known.has(i.url)));
+if (fbVideoPage && !fb?.items?.length) showError(fb?.error ?? "Couldn't find this video's file with sound. Try Record tab.");
 render();

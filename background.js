@@ -1,4 +1,4 @@
-import { classify, cleanUrl, addItem } from './media.js';
+import { classify, cleanUrl, addItem, pageVideoItems, videoIdFromUrl } from './media.js';
 
 const store = chrome.storage.session;
 const tabKey = tabId => `tab:${tabId}`;
@@ -104,7 +104,64 @@ const handlers = {
   },
 };
 
+// ---- Facebook videos with sound ----
+
+// Runs inside the page: Facebook's embedded data, which holds ready-made MP4s with sound (see pageVideoItems).
+function facebookData() {
+  return [...document.querySelectorAll('script[type="application/json"]')]
+    .map(s => s.textContent)
+    .filter(t => t.includes('browser_native'))
+    .join('\n');
+}
+
+const inject = async (tabId, func) => (await chrome.scripting.executeScript({ target: { tabId }, func }))[0].result;
+
+// Facebook only embeds a reel's data when its URL is loaded directly, not when reached by clicking or
+// scrolling inside Facebook. Load the URL in a muted background tab, read the data, close the tab.
+async function facebookDataViaTab(url) {
+  const bg = await chrome.tabs.create({ url, active: false });
+  try {
+    await chrome.tabs.update(bg.id, { muted: true });
+    await new Promise((resolve, reject) => {
+      const done = () => {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+        resolve();
+      };
+      const onUpdated = (id, info) => id === bg.id && info.status === 'complete' && done();
+      const timer = setTimeout(() => {
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+        reject(new Error('Facebook took too long to load'));
+      }, 20_000);
+      chrome.tabs.onUpdated.addListener(onUpdated);
+      chrome.tabs.get(bg.id).then(t => t.status === 'complete' && done());
+    });
+    return await inject(bg.id, facebookData);
+  } finally {
+    chrome.tabs.remove(bg.id).catch(() => {});
+  }
+}
+
+// With-sound items for the Facebook video in `url`: from the open tab when its page carries them, else via a
+// background tab. Cached per video id for the session, so reopening the popup is instant.
+async function facebookItems(tabId, url) {
+  const id = videoIdFromUrl(url);
+  const cacheKey = `fb:${id}`;
+  if (id) {
+    const { [cacheKey]: cached } = await store.get(cacheKey);
+    if (cached) return cached;
+  }
+  let items = pageVideoItems((await inject(tabId, facebookData).catch(() => '')) ?? '', url);
+  if (!items.length && id) items = pageVideoItems(await facebookDataViaTab(url), url);
+  if (id && items.length) await store.set({ [cacheKey]: items });
+  return items;
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+  if (msg.type === 'fbItems') {
+    facebookItems(msg.tabId, msg.url).then(items => reply({ items }), e => reply({ items: [], error: e.message }));
+    return true; // answered later; the work finishes even if the popup closes
+  }
   reply(); // ack so the sender's promise resolves; results travel as separate messages
   if (OFFSCREEN_JOBS.includes(msg.type)) toOffscreen(msg).catch(e => fail(e.message));
   else handlers[msg.type]?.(msg);
