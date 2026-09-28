@@ -353,6 +353,39 @@ test('pageVideoItems says so when the original X video has no sound (its HLS mas
   assert.ok(pageVideoItems([X_TWEET], `https://x.com/someuser/status/${X_ID}`).every(i => !('hls' in i)));
 });
 
+// X's own GraphQL (TweetResultByRestId / TweetDetail, verified 2026-09-28 on a protected account): tweets are
+// {"__typename":"Tweet","rest_id","legacy":{…}}; the same media appears in entities.media and extended_entities.media.
+const XG_ID = '1300000000000000001';
+const XG_MEDIA = {
+  id_str: '1300000000000000099', media_key: '7_1300000000000000099', type: 'video',
+  media_url_https: 'https://pbs.twimg.com/ext_tw_video_thumb/g/pu/img/t.jpg',
+  video_info: { variants: [
+    { content_type: 'application/x-mpegURL', url: 'https://video.twimg.com/ext_tw_video/g/pu/pl/g.m3u8' },
+    mp4(256000, '360x270', 'g1'), mp4(832000, '480x360', 'g2'), mp4(2176000, '960x720', 'g3'),
+  ] },
+};
+const X_GRAPHQL = JSON.stringify({ data: { tweetResult: { result: {
+  __typename: 'Tweet', rest_id: XG_ID,
+  legacy: { id_str: XG_ID, entities: { media: [XG_MEDIA] }, extended_entities: { media: [XG_MEDIA] } },
+  quoted_status_result: { result: { __typename: 'TweetWithVisibilityResults', tweet: {
+    __typename: 'Tweet', rest_id: '1300000000000000002', legacy: { id_str: '1300000000000000002', full_text: 'no media' },
+  } } },
+} } } });
+
+test('pageVideos reads X GraphQL responses: rest_id is the tweet, repeated media counted once', () => {
+  assert.deepEqual(pageVideos([X_GRAPHQL]), [{
+    site: 'x', id: XG_ID,
+    hd: 'https://video.twimg.com/ext_tw_video/1/pu/vid/avc1/960x720/g3.mp4?tag=12',
+    sd: 'https://video.twimg.com/ext_tw_video/1/pu/vid/avc1/480x360/g2.mp4?tag=12',
+    thumb: 'https://pbs.twimg.com/ext_tw_video_thumb/g/pu/img/t.jpg',
+    hls: 'https://video.twimg.com/ext_tw_video/g/pu/pl/g.m3u8',
+  }]);
+  assert.deepEqual(pageVideoItems([X_GRAPHQL], `https://x.com/protecteduser/status/${XG_ID}`).map(i => i.label), [
+    'HD · with sound',
+    'SD · with sound',
+  ]);
+});
+
 test('syndicationUrl builds the tweet-result request (token as X computes it) for X tweets only', () => {
   assert.equal(syndicationUrl(`https://x.com/someuser/status/${X_ID}`),
     `https://cdn.syndication.twimg.com/tweet-result?id=${X_ID}&token=4uj6o5owj98&lang=en`);

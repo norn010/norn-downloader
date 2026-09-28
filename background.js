@@ -122,7 +122,7 @@ const handlers = {
 function pageData() {
   return [...document.querySelectorAll('script[type="application/json"]')]
     .map(s => s.textContent)
-    .filter(t => /browser_native|"progressive_urls"|"video_versions"|"bitrateInfo"/.test(t));
+    .filter(t => /browser_native|"progressive_urls"|"video_versions"|"bitrateInfo"|"video_info"/.test(t));
 }
 
 const inject = async (tabId, func) => (await chrome.scripting.executeScript({ target: { tabId }, func }))[0].result;
@@ -159,28 +159,43 @@ async function siteVideoItems(tabId, url) {
   const id = videoIdFromUrl(url);
   const cacheKey = `video:${id}`;
   let { [cacheKey]: items } = id ? await store.get(cacheKey) : {};
-  const xUrl = syndicationUrl(url);
-  if (!items && xUrl) {
-    const res = await fetch(xUrl);
-    if (!res.ok) throw new Error(`X didn't return this post (HTTP ${res.status}) — try Record tab`);
-    const text = await res.text();
-    // an HLS master without an audio rendition means the original video is silent
-    const silent = new Set();
-    await Promise.all(pageVideos([text]).map(async v => {
-      const master = v.hls && (await fetch(v.hls).then(r => (r.ok ? r.text() : null)).catch(() => null));
-      if (master && !/TYPE=AUDIO/.test(master)) silent.add(v.hls);
-    }));
-    items = pageVideoItems([text], url, silent);
-    if (items.length) await store.set({ [cacheKey]: items });
-  }
   if (!items) {
-    items = pageVideoItems((await inject(tabId, pageData).catch(() => [])) ?? [], url);
-    if (!items.length && id) items = pageVideoItems((await pageDataViaTab(url)) ?? [], url);
+    let texts = (await inject(tabId, pageData).catch(() => [])) ?? [];
+    const xUrl = syndicationUrl(url);
+    if (id && !pageVideoItems(texts, url).length) {
+      // X: a public post the page hasn't loaded through its API yet; other sites: load the URL in a background tab
+      texts = xUrl ? [await xTweetResult(xUrl)] : ((await pageDataViaTab(url)) ?? []);
+    }
+    items = pageVideoItems(texts, url, xUrl ? await silentX(texts, id) : undefined);
     if (id && items.length) await store.set({ [cacheKey]: items });
+    if (xUrl && !items.length) {
+      throw new Error("Couldn't get this post's video. Refresh the X page and open this again (protected accounts need that), or use Record tab.");
+    }
   }
   // the viewer moves through a highlight without the URL changing, so ask the open page where it is each time
   if (id?.startsWith('highlight:')) items = markCurrent(items, await inject(tabId, storyPosition).catch(() => null));
   return items;
+}
+
+// Public tweets through the endpoint behind X's embeds (protected ones come back as a tombstone without media).
+async function xTweetResult(xUrl) {
+  const res = await fetch(xUrl);
+  if (!res.ok) throw new Error(`X didn't return this post (HTTP ${res.status}) — try Record tab`);
+  return res.text();
+}
+
+// X videos whose HLS master has no audio rendition: the original itself is silent.
+async function silentX(texts, id) {
+  const silent = new Set();
+  await Promise.all(
+    pageVideos(texts)
+      .filter(v => v.id === id && v.hls)
+      .map(async v => {
+        const master = await fetch(v.hls).then(r => (r.ok ? r.text() : null)).catch(() => null);
+        if (master && !/TYPE=AUDIO/.test(master)) silent.add(v.hls);
+      }),
+  );
+  return silent;
 }
 
 // Runs inside the page: which segment of the story progress bar is current. The bar is a thin row of segments

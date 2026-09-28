@@ -162,9 +162,12 @@ export function pageVideos(texts) {
   // X (tweet-result JSON): mediaDetails[] {type: video|animated_gif, video_info.variants: MP4s with sound + HLS}.
   // HD = highest bitrate, SD = largest below 720p; a tweet's videos are numbered when there is more than one.
   const xCount = new Map();
+  const xSeen = new Set(); // X's own API repeats each media item (entities + extended_entities)
   const x = (node, tweet) => {
     const mp4s = node.video_info.variants.filter(v => v?.content_type === 'video/mp4' && typeof v.url === 'string');
-    if (!mp4s.length) return;
+    const key = `${tweet}/${node.media_key ?? node.id_str ?? mp4s[0]?.url}`;
+    if (!mp4s.length || xSeen.has(key)) return;
+    xSeen.add(key);
     xCount.set(tweet, (xCount.get(tweet) ?? 0) + 1);
     const entry = { site: 'x', id: tweet, num: xCount.get(tweet) };
     if (node.type === 'animated_gif') entry.gif = mp4s[0].url;
@@ -188,7 +191,9 @@ export function pageVideos(texts) {
     if (!node || typeof node !== 'object') return;
     if (Array.isArray(node)) return node.forEach(x => walk(x, ctx));
     if (typeof node.code === 'string') ctx = { ...ctx, code: node.code };
-    if (node.__typename === 'Tweet' && typeof node.id_str === 'string') ctx = { ...ctx, tweet: node.id_str };
+    // tweets: rest_id in X's own API, id_str in the tweet-result endpoint
+    const tweet = node.__typename === 'Tweet' && (node.rest_id ?? node.id_str);
+    if (typeof tweet === 'string') ctx = { ...ctx, tweet };
     visit(node, ctx);
     if (typeof node.id === 'string' && Array.isArray(node.video?.bitrateInfo)) tiktok(node);
     if (ctx.tweet && /^(video|animated_gif)$/.test(node.type) && Array.isArray(node.video_info?.variants)) x(node, ctx.tweet);

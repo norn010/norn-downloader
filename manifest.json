@@ -7,5 +7,13 @@
   "permissions": ["webRequest", "downloads", "scripting", "activeTab", "offscreen", "tabCapture", "storage", "declarativeNetRequestWithHostAccess"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js", "type": "module" },
+  "content_scripts": [
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*", "https://mobile.twitter.com/*"],
+      "js": ["x-capture.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ],
   "action": { "default_title": "Norn Downloader", "default_popup": "popup.html" }
 }
