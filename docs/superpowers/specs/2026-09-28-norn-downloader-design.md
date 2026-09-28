@@ -90,7 +90,11 @@ scrolling inside the site does not. Every such URL tested carried sound.
 4. On facebook.com and instagram.com, `hideSitePieces` drops every fbcdn/cdninstagram video/audio response (DASH pieces). Images stay.
 5. If the URL names a video but the page doesn't carry it, background automatically opens the URL in a muted inactive tab, waits for load (20 s limit), injects `pageData()`, closes the tab and returns the items. The popup shows "Getting this video with sound…" meanwhile, and an error suggesting Record tab if nothing is found.
 
-Not covered: Instagram story highlights (`/stories/highlights/<id>/`).
+Instagram highlights (`/stories/highlights/<id>/`, verified 2026-09-28): one reel `{"id":"highlight:<id>","items":[…]}` with every item in viewing order; the URL does not change while the viewer moves through it.
+
+6. `videoIdFromUrl` gives `highlight:<id>`; `pageVideos` tags items of that reel with `reel`, `index` (position among all items, photos included) and `reelSize`. `pageVideoItems` lists every video of the highlight, labelled `#<n> · HD · with sound`, named `instagram-highlight-<id>-<n>-hd.mp4`.
+7. Background injects `storyPosition()` into the open tab each time (never cached): the thin progress-bar row where exactly one segment holds a fill element gives `{count, index}`. `markCurrent` moves that item first as `This story · HD · with sound`, only if `count` equals the highlight's size and the item is a video; otherwise the list stays in order.
+8. Instagram cards use the item's smallest `image_versions2` candidate as the thumbnail instead of loading the video.
 
 ## Flow 3 — Downloads
 

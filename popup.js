@@ -71,12 +71,12 @@ function card(item) {
     else selected.delete(item.url);
     sync();
   };
-  const thumb =
-    item.kind === 'image'
-      ? Object.assign(document.createElement('img'), { src: item.url, loading: 'lazy', alt: '' })
-      : item.label // page-provided video: show its first frame
-        ? Object.assign(document.createElement('video'), { src: item.url, preload: 'metadata', muted: true })
-        : Object.assign(document.createElement('div'), { textContent: item.kind.toUpperCase() });
+  const picture = item.kind === 'image' ? item.url : item.thumb; // Instagram gives a cover image per video
+  const thumb = picture
+    ? Object.assign(document.createElement('img'), { src: picture, loading: 'lazy', alt: '' })
+    : item.label // other page-provided video: show its first frame
+      ? Object.assign(document.createElement('video'), { src: item.url, preload: 'metadata', muted: true })
+      : Object.assign(document.createElement('div'), { textContent: item.kind.toUpperCase() });
   thumb.classList.add('thumb');
   const meta = document.createElement('small');
   meta.textContent = item.label ?? [fileName(item.url), fmtSize(item.size)].filter(Boolean).join(' · ');

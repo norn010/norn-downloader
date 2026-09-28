@@ -1,4 +1,4 @@
-import { classify, cleanUrl, addItem, pageVideoItems, videoIdFromUrl } from './media.js';
+import { classify, cleanUrl, addItem, markCurrent, pageVideoItems, videoIdFromUrl } from './media.js';
 
 const store = chrome.storage.session;
 const tabKey = tabId => `tab:${tabId}`;
@@ -146,14 +146,30 @@ async function pageDataViaTab(url) {
 async function siteVideoItems(tabId, url) {
   const id = videoIdFromUrl(url);
   const cacheKey = `video:${id}`;
-  if (id) {
-    const { [cacheKey]: cached } = await store.get(cacheKey);
-    if (cached) return cached;
+  let { [cacheKey]: items } = id ? await store.get(cacheKey) : {};
+  if (!items) {
+    items = pageVideoItems((await inject(tabId, pageData).catch(() => [])) ?? [], url);
+    if (!items.length && id) items = pageVideoItems((await pageDataViaTab(url)) ?? [], url);
+    if (id && items.length) await store.set({ [cacheKey]: items });
   }
-  let items = pageVideoItems((await inject(tabId, pageData).catch(() => [])) ?? [], url);
-  if (!items.length && id) items = pageVideoItems((await pageDataViaTab(url)) ?? [], url);
-  if (id && items.length) await store.set({ [cacheKey]: items });
+  // the viewer moves through a highlight without the URL changing, so ask the open page where it is each time
+  if (id?.startsWith('highlight:')) items = markCurrent(items, await inject(tabId, storyPosition).catch(() => null));
   return items;
+}
+
+// Runs inside the page: which segment of the story progress bar is current. The bar is a thin row of segments
+// where only the current one holds a fill element. ponytail: tied to Instagram's markup; without it, no item is
+// marked current and the popup simply lists the highlight in order.
+function storyPosition() {
+  for (const row of document.querySelectorAll('div')) {
+    const bars = [...row.children];
+    if (bars.length < 2 || bars.some(b => b.tagName !== 'DIV')) continue;
+    const h = row.getBoundingClientRect().height;
+    if (!(h > 0 && h < 12)) continue;
+    const filled = bars.filter(b => b.firstElementChild);
+    if (filled.length === 1) return { count: bars.length, index: bars.indexOf(filled[0]) };
+  }
+  return null;
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {

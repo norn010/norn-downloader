@@ -114,7 +114,7 @@ export function pageVideos(texts) {
     v.sd ??= typeof sd === 'string' ? sd : null;
     v.hd ??= typeof hd === 'string' ? hd : null;
   };
-  const visit = (node, code) => {
+  const visit = (node, ctx) => {
     if (typeof node.id === 'string' && ('browser_native_sd_url' in node || 'browser_native_hd_url' in node)) {
       facebook(node.id, node.browser_native_sd_url, node.browser_native_hd_url);
     }
@@ -122,7 +122,7 @@ export function pageVideos(texts) {
       const url = hd => node.progressive_urls.find(e => (e?.metadata?.quality === 'HD') === hd)?.progressive_url;
       facebook(node.id, url(false), url(true));
     }
-    if (code && Array.isArray(node.video_versions)) {
+    if (ctx.code && Array.isArray(node.video_versions)) {
       // story versions carry no size of their own; the item's original_width/height describe them
       const area = v => (v.width ?? 0) * (v.height ?? 0);
       const best = node.video_versions
@@ -131,20 +131,31 @@ export function pageVideos(texts) {
       if (best) {
         const hd = Math.min(best.width ?? node.original_width, best.height ?? node.original_height) >= 720;
         const pk = typeof node.pk === 'string' ? node.pk : null;
-        out.push({ site: 'instagram', id: code, pk, sd: hd ? null : best.url, hd: hd ? best.url : null });
+        const thumb = node.image_versions2?.candidates?.at(-1)?.url; // smallest cover image
+        out.push({
+          site: 'instagram', id: ctx.code, pk, sd: hd ? null : best.url, hd: hd ? best.url : null,
+          ...(typeof thumb === 'string' && { thumb }),
+          ...(ctx.reel && { reel: ctx.reel, index: ctx.index, reelSize: ctx.reelSize }),
+        });
       }
     }
   };
-  const walk = (node, code) => {
+  // ctx: the nearest Instagram post code, and for highlight items their reel and position in it
+  const walk = (node, ctx) => {
     if (!node || typeof node !== 'object') return;
-    if (Array.isArray(node)) return node.forEach(x => walk(x, code));
-    code = typeof node.code === 'string' ? node.code : code;
-    visit(node, code);
-    for (const key in node) walk(node[key], code);
+    if (Array.isArray(node)) return node.forEach(x => walk(x, ctx));
+    if (typeof node.code === 'string') ctx = { ...ctx, code: node.code };
+    visit(node, ctx);
+    const reel = typeof node.id === 'string' && node.id.startsWith('highlight:') && Array.isArray(node.items);
+    for (const key in node) {
+      if (reel && key === 'items') {
+        node.items.forEach((item, index) => walk(item, { ...ctx, reel: node.id, index, reelSize: node.items.length }));
+      } else walk(node[key], ctx);
+    }
   };
   for (const text of texts) {
     try {
-      walk(JSON.parse(text));
+      walk(JSON.parse(text), {});
     } catch {
       // not a JSON document; skip it
     }
@@ -163,11 +174,14 @@ const FACEBOOK = /(^|\.)facebook\.com$/;
 const INSTAGRAM = /(^|\.)instagram\.com$/;
 
 // The video a page is about: Facebook /reel/<id>, /videos/<id>, ?v=<id>; Instagram /p|reel|reels|tv/<code>,
-// or a story's number in /stories/<user>/<number>/ (highlights not covered). null anywhere else.
+// a story's number in /stories/<user>/<number>/, or "highlight:<id>" for /stories/highlights/<id>/.
+// null anywhere else.
 export function videoIdFromUrl(url) {
   if (hostIs(url, INSTAGRAM)) {
     const path = new URL(url).pathname;
+    const highlight = path.match(/^\/stories\/highlights\/(\d+)/)?.[1];
     return (
+      (highlight && `highlight:${highlight}`) ??
       path.match(/^\/(?:p|reels?|tv)\/([A-Za-z0-9_-]+)/)?.[1] ??
       path.match(/^\/stories\/(?!highlights\/)[^/]+\/(\d+)/)?.[1] ??
       null
@@ -180,20 +194,37 @@ export function videoIdFromUrl(url) {
 }
 
 // Popup items for the video the page is about (the id in its URL, never preloaded next ones), else every one
-// found. HD first; http(s) only.
+// found; for a highlight, all its videos numbered by position. HD first; http(s) only.
 export function pageVideoItems(texts, pageUrl) {
   const id = videoIdFromUrl(pageUrl);
-  const item = (v, q) => ({
-    url: v[q],
-    kind: 'video',
-    size: null,
-    label: `${q.toUpperCase()} · with sound`,
-    filename: `${v.site}-${id ?? v.id}-${q}.mp4`,
-  });
+  const item = (v, q) => {
+    const n = v.reel ? v.index + 1 : null;
+    return {
+      url: v[q],
+      kind: 'video',
+      size: null,
+      label: `${n ? `#${n} · ` : ''}${q.toUpperCase()} · with sound`,
+      filename: n
+        ? `${v.site}-highlight-${v.reel.slice('highlight:'.length)}-${n}-${q}.mp4`
+        : `${v.site}-${id ?? v.id}-${q}.mp4`,
+      ...(v.thumb && { thumb: v.thumb }),
+      ...(v.reel && { index: v.index, reelSize: v.reelSize }),
+    };
+  };
   return pageVideos(texts)
-    .filter(v => !id || v.id === id || v.pk === id)
+    .filter(v => !id || v.id === id || v.pk === id || v.reel === id)
     .flatMap(v => [v.hd && item(v, 'hd'), v.sd && item(v, 'sd')])
     .filter(i => i && /^https?:/.test(i.url));
+}
+
+// Highlights: put the item the viewer is on first. `position` = {count, index} read from the page's progress bar;
+// ignored unless its segment count matches the highlight's size (and the item there is a video).
+export function markCurrent(items, position) {
+  if (!items.some(i => i.reelSize === position?.count && i.index === position?.index)) return items;
+  const current = items
+    .filter(i => i.index === position.index)
+    .map(i => ({ ...i, label: i.label.replace(/^#\d+/, 'This story') }));
+  return [...current, ...items.filter(i => i.index !== position.index)];
 }
 
 // On Facebook and Instagram every fbcdn/cdninstagram video or audio response is a DASH piece (video-only or

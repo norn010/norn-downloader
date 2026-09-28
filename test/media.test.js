@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  classify, cleanUrl, addItem, MAX_ITEMS, safeName, srcsetBest, mergeItems, pageVideos, videoIdFromUrl, pageVideoItems, hideSitePieces,
+  classify, cleanUrl, addItem, MAX_ITEMS, safeName, srcsetBest, mergeItems, pageVideos, videoIdFromUrl, pageVideoItems, hideSitePieces, markCurrent,
 } from '../media.js';
 
 test('classify uses Content-Type first', () => {
@@ -212,6 +212,50 @@ test('pageVideoItems: the story in the URL only, named by its number', () => {
   assert.deepEqual(pageVideoItems([IG_STORY], 'https://www.instagram.com/stories/someone/1/'), []);
 });
 
+// Instagram highlight (verified 2026-09-28): one reel "highlight:<id>" with its items in viewing order; photo items
+// have no video_versions but still count as a progress-bar segment.
+const IG_HIGHLIGHT = JSON.stringify({ data: { xdt_api__v1__feed__reels_media__connection: { edges: [{ node: {
+  id: 'highlight:18000000000000001', title: 'x', items: [
+    { pk: '101', code: 'H1', media_type: 2, original_width: 720, original_height: 1280,
+      image_versions2: { candidates: [{ width: 720, url: 'https://ig.test/h1-big.jpg' }, { width: 150, url: 'https://ig.test/h1-small.jpg' }] },
+      video_versions: [{ type: 101, url: 'https://ig.test/h1.mp4' }] },
+    { pk: '102', code: 'H2', media_type: 1, image_versions2: { candidates: [{ width: 150, url: 'https://ig.test/h2.jpg' }] } },
+    { pk: '103', code: 'H3', media_type: 2, original_width: 1080, original_height: 1920,
+      video_versions: [{ type: 101, url: 'https://ig.test/h3.mp4' }] },
+  ],
+} }] } } });
+const HL_URL = 'https://www.instagram.com/stories/highlights/18000000000000001/';
+
+test('pageVideos reads highlight items with their place in the highlight, and a cover thumbnail', () => {
+  assert.deepEqual(pageVideos([IG_HIGHLIGHT]), [
+    { site: 'instagram', id: 'H1', pk: '101', sd: null, hd: 'https://ig.test/h1.mp4', thumb: 'https://ig.test/h1-small.jpg',
+      reel: 'highlight:18000000000000001', index: 0, reelSize: 3 },
+    { site: 'instagram', id: 'H3', pk: '103', sd: null, hd: 'https://ig.test/h3.mp4',
+      reel: 'highlight:18000000000000001', index: 2, reelSize: 3 },
+  ]);
+});
+
+test('pageVideoItems lists every video of the highlight in the URL, numbered by position', () => {
+  const items = pageVideoItems([IG_HIGHLIGHT], HL_URL);
+  assert.deepEqual(items.map(i => [i.label, i.filename, i.index, i.reelSize]), [
+    ['#1 · HD · with sound', 'instagram-highlight-18000000000000001-1-hd.mp4', 0, 3],
+    ['#3 · HD · with sound', 'instagram-highlight-18000000000000001-3-hd.mp4', 2, 3],
+  ]);
+  assert.equal(items[0].thumb, 'https://ig.test/h1-small.jpg');
+  assert.deepEqual(pageVideoItems([IG_HIGHLIGHT], 'https://www.instagram.com/stories/highlights/1/'), []);
+});
+
+test('markCurrent puts the item the viewer is on first, only when the progress bar matches the highlight', () => {
+  const items = pageVideoItems([IG_HIGHLIGHT], HL_URL);
+  assert.deepEqual(markCurrent(items, { count: 3, index: 2 }).map(i => i.label), [
+    'This story · HD · with sound',
+    '#1 · HD · with sound',
+  ]);
+  assert.equal(markCurrent(items, { count: 53, index: 2 }), items); // bar belongs to something else
+  assert.equal(markCurrent(items, { count: 3, index: 1 }), items); // current item is a photo
+  assert.equal(markCurrent(items, null), items);
+});
+
 test('videoIdFromUrl finds Facebook video ids and Instagram post codes only', () => {
   assert.equal(videoIdFromUrl('https://www.facebook.com/reel/1000000000000001'), '1000000000000001');
   assert.equal(videoIdFromUrl('https://www.facebook.com/reel/1000000000000001/?s=ifu'), '1000000000000001');
@@ -226,7 +270,7 @@ test('videoIdFromUrl finds Facebook video ids and Instagram post codes only', ()
   assert.equal(videoIdFromUrl('https://www.instagram.com/'), null);
   assert.equal(videoIdFromUrl('https://www.instagram.com/stories/someone/3000000000000000105/'), '3000000000000000105');
   assert.equal(videoIdFromUrl('https://www.instagram.com/stories/someone/'), null);
-  assert.equal(videoIdFromUrl('https://www.instagram.com/stories/highlights/17912345678901234/'), null);
+  assert.equal(videoIdFromUrl('https://www.instagram.com/stories/highlights/17912345678901234/'), 'highlight:17912345678901234');
   assert.equal(videoIdFromUrl('https://www.youtube.com/watch?v=kJiHgFeDcBa'), null);
   assert.equal(videoIdFromUrl('https://example.com/reel/1000000000000001'), null);
   assert.equal(videoIdFromUrl(undefined), null);
