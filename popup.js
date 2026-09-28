@@ -41,14 +41,18 @@ try {
   // chrome:// pages, the Web Store, PDFs: network list only
 }
 
+
 const siteVideoPage = videoIdFromUrl(tab.url) !== null;
 let loadingSite = siteVideoPage; // background fetches the with-sound files; see the videoItems request below
 const items = hideSitePieces(mergeItems(net, scan), tab.url);
 const selected = new Set();
 let filter = 'all';
 
+// site videos with sound (they carry a label) get their own cards on top; everything else goes in the grid
+const heroItems = () => items.filter(i => i.label);
+const gridItems = () => items.filter(i => !i.label);
 const matches = (item, f) => f === 'all' || item.kind === f || (f === 'video' && item.kind === 'audio');
-const visible = () => items.filter(i => matches(i, filter));
+const visible = () => gridItems().filter(i => matches(i, filter));
 
 function fileName(url) {
   const u = new URL(url);
@@ -61,6 +65,46 @@ function fileName(url) {
 
 const fmtSize = b => (b == null ? '' : b < 1024 ** 2 ? `${Math.round(b / 1024)} KB` : `${(b / 1024 ** 2).toFixed(1)} MB`);
 
+function thumbFor(item) {
+  const picture = item.kind === 'image' ? item.url : item.thumb; // Instagram/TikTok/X give a cover image
+  const thumb = picture
+    ? Object.assign(document.createElement('img'), { src: picture, loading: 'lazy', alt: '' })
+    : item.label // other page-provided video: show its first frame
+      ? Object.assign(document.createElement('video'), { src: item.url, preload: 'metadata', muted: true })
+      : Object.assign(document.createElement('div'), { textContent: item.kind.toUpperCase() });
+  thumb.classList.add('thumb');
+  return thumb;
+}
+
+async function downloadItem(item) {
+  if (item.kind === 'hls') return chrome.runtime.sendMessage({ type: 'hls', url: item.url, name });
+  if (item.fetch) return chrome.runtime.sendMessage({ type: 'file', url: item.url, filename: item.filename });
+  return chrome.downloads.download({ url: item.url, saveAs: false, ...(item.filename && { filename: item.filename }) });
+}
+
+function bigCard(item) {
+  const row = document.createElement('div');
+  row.className = 'big';
+  const what = document.createElement('div');
+  what.className = 'what';
+  const title = document.createElement('b');
+  title.textContent = item.label;
+  const file = document.createElement('small');
+  file.textContent = item.filename ?? fileName(item.url);
+  what.append(title, file);
+  const button = Object.assign(document.createElement('button'), { className: 'primary', textContent: 'Download' });
+  button.onclick = async () => {
+    try {
+      await downloadItem(item);
+      window.close();
+    } catch (e) {
+      showError(`Couldn't download: ${e.message}`);
+    }
+  };
+  row.append(thumbFor(item), what, button);
+  return row;
+}
+
 function card(item) {
   const label = document.createElement('label');
   label.className = 'card';
@@ -71,16 +115,9 @@ function card(item) {
     else selected.delete(item.url);
     sync();
   };
-  const picture = item.kind === 'image' ? item.url : item.thumb; // Instagram gives a cover image per video
-  const thumb = picture
-    ? Object.assign(document.createElement('img'), { src: picture, loading: 'lazy', alt: '' })
-    : item.label // other page-provided video: show its first frame
-      ? Object.assign(document.createElement('video'), { src: item.url, preload: 'metadata', muted: true })
-      : Object.assign(document.createElement('div'), { textContent: item.kind.toUpperCase() });
-  thumb.classList.add('thumb');
   const meta = document.createElement('small');
-  meta.textContent = item.label ?? [fileName(item.url), fmtSize(item.size)].filter(Boolean).join(' · ');
-  label.append(box, thumb, meta);
+  meta.textContent = [fileName(item.url), fmtSize(item.size)].filter(Boolean).join(' · ');
+  label.append(box, thumbFor(item), meta);
   return label;
 }
 
@@ -92,18 +129,20 @@ function sync() {
 }
 
 function render() {
+  $('#hero').replaceChildren(...heroItems().map(bigCard));
+  $('#heroSection').hidden = heroItems().length === 0;
+  $('#siteLoading').hidden = !loadingSite;
   for (const b of document.querySelectorAll('[data-filter]')) {
     const f = b.dataset.filter;
     b.setAttribute('aria-pressed', String(f === filter));
-    b.textContent = `${b.dataset.label} ${items.filter(i => matches(i, f)).length}`;
+    b.textContent = `${b.dataset.label} ${gridItems().filter(i => matches(i, f)).length}`;
   }
   const list = visible();
   const empty = Object.assign(document.createElement('p'), {
     className: 'empty',
-    textContent: 'Nothing found yet. Play or scroll the page, then reopen.',
+    textContent: 'No files here yet. Play or scroll the page, then open this again.',
   });
-  $('#grid').replaceChildren(...(list.length ? list.map(card) : loadingSite ? [] : [empty]));
-  $('#siteLoading').hidden = !loadingSite;
+  $('#grid').replaceChildren(...(list.length ? list.map(card) : [empty]));
   sync();
 }
 
@@ -131,18 +170,22 @@ $('#download').onclick = async () => {
   const errors = [];
   for (const item of items.filter(i => selected.has(i.url))) {
     try {
-      if (item.kind === 'hls') await chrome.runtime.sendMessage({ type: 'hls', url: item.url, name });
-      else if (item.fetch) await chrome.runtime.sendMessage({ type: 'file', url: item.url, filename: item.filename });
-      else await chrome.downloads.download({ url: item.url, saveAs: false, ...(item.filename && { filename: item.filename }) });
+      await downloadItem(item);
     } catch (e) {
       errors.push(`${fileName(item.url)}: ${e.message}`);
     }
   }
-  if (errors.length) showError(errors.join('\n'));
+  if (errors.length) showError(`Some files couldn't be downloaded:\n${errors.join('\n')}`);
   else window.close();
 };
 
-$('#record').textContent = status.recording ? 'Stop recording' : 'Record tab';
+$('#moreBtn').onclick = () => {
+  const open = $('#menu').hidden;
+  $('#menu').hidden = !open;
+  $('#moreBtn').setAttribute('aria-expanded', String(open));
+};
+
+$('#record').textContent = status.recording ? '⏹ Stop recording' : '⏺ Record this tab';
 $('#record').onclick = async () => {
   try {
     if (status.recording) {
@@ -154,9 +197,11 @@ $('#record').onclick = async () => {
     }
     window.close();
   } catch (e) {
-    showError(e.message);
+    showError(`Couldn't record this tab: ${e.message}`);
   }
 };
+// a running recording or live capture is what the user most likely came back to stop
+if (status.recording || status.live) $('#menu').hidden = false;
 
 $('#stopLive').hidden = !status.live;
 $('#stopLive').onclick = async () => {
@@ -169,7 +214,12 @@ $('#dismiss').onclick = () => {
   chrome.runtime.sendMessage({ type: 'clearError' });
 };
 
-// yt-dlp saves straight to disk, outside Chrome's download list, so say where the last one went
+// yt-dlp is the way to download on YouTube, so it goes on top there; elsewhere it waits in the ⋯ menu
+const youtube = /(^|\.)(youtube\.com|youtu\.be)$/.test(new URL(tab.url ?? 'about:blank').hostname);
+if (youtube) {
+  $('#ytdlpTopSlot').append($('#ytdlpBox'));
+  $('#ytdlpTopSlot').hidden = false;
+} else $('#ytdlpMenuSlot').append($('#ytdlpBox'));
 $('#ytdlp').disabled = $('#quality').disabled = !/^https?:/.test(tab.url ?? '');
 $('#ytdlp').onclick = async () => {
   await chrome.runtime.sendMessage({ type: 'ytdlp', url: tab.url, quality: $('#quality').value });
@@ -179,8 +229,10 @@ $('#ytdlp').onclick = async () => {
 const { ytdlpQuality } = await chrome.storage.local.get('ytdlpQuality');
 if (ytdlpQuality) $('#quality').value = ytdlpQuality;
 $('#quality').onchange = () => chrome.storage.local.set({ ytdlpQuality: $('#quality').value });
+
+// yt-dlp saves straight to disk, outside Chrome's download list, so say where the last one went
 if (ytdlpSaved) {
-  $('#savedText').textContent = `yt-dlp saved: ${ytdlpSaved.split(/[\\/]/).pop()}`;
+  $('#savedText').textContent = `✓ Saved: ${ytdlpSaved.split(/[\\/]/).pop()}`;
   $('#saved').hidden = false;
 }
 $('#openFolder').onclick = () => {
@@ -190,13 +242,15 @@ $('#openFolder').onclick = () => {
 };
 
 if (lastError) showError(lastError);
-$('#hint').hidden = !scan.blobVideo || siteVideoPage;
+$('#hint').hidden = !scan.blobVideo || siteVideoPage || youtube;
 render();
 
-// Facebook/Instagram with-sound MP4s go on top; background may open a hidden tab to get them (a few seconds).
+// Site videos with sound go on top; background may open a hidden tab to get them (a few seconds).
 const site = await chrome.runtime.sendMessage({ type: 'videoItems', tabId: tab.id, url: tab.url }).catch(e => ({ error: e.message }));
 loadingSite = false;
 const known = new Set(items.map(i => i.url));
 items.unshift(...(site?.items ?? []).filter(i => !known.has(i.url)));
-if (siteVideoPage && !site?.items?.length) showError(site?.error ?? "Couldn't find this video's file with sound. Try Record tab.");
+if (siteVideoPage && !site?.items?.length) {
+  showError(site?.error ?? "Couldn't find this video's file with sound. Try ⋯ → Record this tab.");
+}
 render();

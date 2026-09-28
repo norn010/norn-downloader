@@ -4,67 +4,144 @@
 <meta charset="utf-8">
 <title>Norn Downloader</title>
 <style>
-  :root { color-scheme: light dark; --bg: #fff; --fg: #1a1a1a; --muted: #6b6b6b; --line: #e3e3e3; --accent: #3b5bdb; --danger: #c92a2a; }
+  :root {
+    color-scheme: light dark;
+    --bg: #fffaf4; --panel: #fff; --fg: #2b1d12; --muted: #8a7563; --line: #f0e2d3;
+    --accent: #f7941d; --accent-strong: #d9760a; --accent-soft: #fff0dc; --stripe: #a8622c;
+    --danger: #c8372d; --danger-soft: #fdecea; --ok: #2f8a4c; --ok-soft: #e8f6ed;
+  }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #1e1e1e; --fg: #eee; --muted: #9a9a9a; --line: #333; --accent: #748ffc; --danger: #ff6b6b; }
+    :root {
+      --bg: #1c1712; --panel: #26201a; --fg: #f6ece2; --muted: #b3a08e; --line: #3a3128;
+      --accent: #f7941d; --accent-strong: #ffad4d; --accent-soft: #3a2a17; --stripe: #d08a4e;
+      --danger: #ff7b70; --danger-soft: #3a1f1c; --ok: #6fd28f; --ok-soft: #1c3324;
+    }
   }
   [hidden] { display: none !important; }
-  body { margin: 0; width: 380px; font: 13px system-ui, sans-serif; background: var(--bg); color: var(--fg); }
-  .bar { display: flex; gap: 6px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); }
-  .spacer { flex: 1; }
-  button { font: inherit; padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px; background: none; color: inherit; cursor: pointer; }
-  button[aria-pressed="true"], button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  button:disabled, select:disabled { opacity: .5; cursor: default; }
-  select { flex: 1; min-width: 0; font: inherit; padding: 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: inherit; }
-  .note { margin: 8px 10px 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
-  #saved { display: flex; gap: 6px; align-items: center; }
-  .note.error { display: flex; gap: 6px; align-items: start; border-color: var(--danger); color: var(--danger); white-space: pre-line; }
-  #grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 10px; max-height: 420px; overflow-y: auto; }
-  .card { position: relative; display: flex; flex-direction: column; gap: 2px; cursor: pointer; min-width: 0; }
-  .card input { position: absolute; top: 4px; left: 4px; margin: 0; }
-  .thumb { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; background: var(--line); display: grid; place-items: center; font-weight: 600; color: var(--muted); }
-  .card:has(input:checked) .thumb { outline: 2px solid var(--accent); outline-offset: -2px; }
-  .card small { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .empty { grid-column: 1 / -1; margin: 0; padding: 24px 0; text-align: center; color: var(--muted); }
+  * { box-sizing: border-box; }
+  body { margin: 0; width: 400px; max-height: 590px; display: flex; flex-direction: column; font: 14px system-ui, 'Segoe UI', sans-serif; background: var(--bg); color: var(--fg); }
+  button, select { font: inherit; color: inherit; border-radius: 10px; cursor: pointer; }
+  button { padding: 7px 12px; border: 1px solid var(--line); background: var(--panel); }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled, select:disabled { opacity: .45; cursor: default; }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .primary:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); }
+  select { padding: 7px 8px; border: 1px solid var(--line); background: var(--panel); min-width: 0; }
+
+  header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header img { width: 28px; height: 28px; }
+  header h1 { margin: 0; font-size: 16px; flex: 1; }
+  header h1 span { color: var(--muted); font-weight: 400; }
+  #moreBtn { padding: 4px 10px; font-size: 18px; line-height: 1; }
+  #menu { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; background: var(--accent-soft); border-bottom: 1px solid var(--line); }
+  #menu .row { display: flex; gap: 8px; align-items: center; }
+  #menu .row > * { flex: 1; }
+  #menu small { color: var(--muted); }
+
+  main { overflow-y: auto; flex: 1; padding: 10px 12px 4px; display: flex; flex-direction: column; gap: 10px; }
+  .note { padding: 9px 11px; border-radius: 10px; display: flex; gap: 8px; align-items: flex-start; line-height: 1.35; }
+  .note .text { flex: 1; white-space: pre-line; overflow-wrap: anywhere; }
+  .note button { padding: 3px 9px; }
+  .error { background: var(--danger-soft); color: var(--danger); }
+  .saved { background: var(--ok-soft); color: var(--ok); align-items: center; }
+  .info { background: var(--accent-soft); }
+
+  section h2 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .hero { display: flex; flex-direction: column; gap: 8px; }
+  .big { display: flex; gap: 10px; align-items: center; padding: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+  .big .thumb { width: 64px; height: 64px; flex: none; }
+  .big .what { flex: 1; min-width: 0; }
+  .big .what b { display: block; }
+  .big .what small { color: var(--muted); display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .loading { display: flex; gap: 10px; align-items: center; color: var(--muted); padding: 10px; border: 1px dashed var(--line); border-radius: 12px; }
+  .spinner { width: 18px; height: 18px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .ytrow { display: flex; gap: 8px; }
+  .ytrow button { flex: none; }
+  .ytrow select { flex: 1; }
+
+  .tabs { display: flex; gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 3px; }
+  .tabs button { flex: 1; border: 0; background: none; padding: 6px 4px; border-radius: 9px; font-size: 13px; }
+  .tabs button[aria-pressed="true"] { background: var(--accent); color: #fff; font-weight: 600; }
+  #grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .card { position: relative; display: flex; flex-direction: column; gap: 3px; cursor: pointer; min-width: 0; }
+  .card input { position: absolute; top: 6px; left: 6px; margin: 0; width: 16px; height: 16px; accent-color: var(--accent); }
+  .thumb { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 10px; background: var(--line); display: grid; place-items: center; font-size: 11px; font-weight: 700; color: var(--muted); }
+  .card:has(input:checked) .thumb { outline: 3px solid var(--accent); outline-offset: -3px; }
+  .card small { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .empty { grid-column: 1 / -1; margin: 0; padding: 22px 8px; text-align: center; color: var(--muted); }
+
+  footer { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); background: var(--panel); }
+  footer label { flex: 1; display: flex; gap: 6px; align-items: center; color: var(--muted); }
+  footer input { accent-color: var(--accent); width: 16px; height: 16px; }
 </style>
 </head>
 <body>
-  <div class="bar">
-    <button data-filter="all" data-label="All" aria-pressed="true">All</button>
-    <button data-filter="image" data-label="Images">Images</button>
-    <button data-filter="video" data-label="Videos">Videos</button>
-    <button data-filter="hls" data-label="Streams">Streams</button>
+  <header>
+    <img src="icons/icon32.png" alt="">
+    <h1>Norn <span>Downloader</span></h1>
+    <button id="moreBtn" aria-expanded="false" aria-controls="menu" title="More tools">⋯</button>
+  </header>
+
+  <div id="menu" hidden>
+    <div class="row">
+      <button id="record">⏺ Record this tab</button>
+      <button id="stopLive" hidden>⏹ Stop live</button>
+    </div>
+    <small>Record works on any site: play the video, then stop to save a .webm.</small>
+    <div id="ytdlpMenuSlot"></div>
   </div>
-  <div class="bar">
+
+  <main>
+    <div id="error" class="note error" hidden>
+      <span id="errorText" class="text"></span>
+      <button id="dismiss" aria-label="Dismiss">✕</button>
+    </div>
+    <div id="saved" class="note saved" hidden>
+      <span id="savedText" class="text"></span>
+      <button id="openFolder">Open folder</button>
+    </div>
+
+    <section id="ytdlpTopSlot" hidden>
+      <h2>Download this video</h2>
+    </section>
+    <div id="ytdlpBox" class="ytrow">
+      <button id="ytdlp" class="primary" title="Download this page's video with yt-dlp (YouTube and many more sites)">⬇ yt-dlp</button>
+      <select id="quality" aria-label="Quality">
+        <option value="compatible">Best compatible (H.264)</option>
+        <option value="max">Max quality (4K, VP9/AV1)</option>
+        <option value="1080p">1080p</option>
+        <option value="720p">720p</option>
+        <option value="480p">480p</option>
+        <option value="360p">360p</option>
+        <option value="mp3">Audio only (MP3)</option>
+      </select>
+    </div>
+
+    <section id="heroSection" hidden>
+      <h2>Video with sound</h2>
+      <div id="hero" class="hero"></div>
+    </section>
+    <div id="siteLoading" class="loading" hidden><div class="spinner"></div>Getting this video with sound…</div>
+
+    <div id="hint" class="note info" hidden>
+      <span class="text">This video plays through a stream player, so it may not be listed. Use ⋯ → Record this tab.</span>
+    </div>
+
+    <div class="tabs" role="group" aria-label="Filter">
+      <button data-filter="all" data-label="All" aria-pressed="true">All</button>
+      <button data-filter="image" data-label="Images">Images</button>
+      <button data-filter="video" data-label="Videos">Videos</button>
+      <button data-filter="hls" data-label="Streams">Streams</button>
+    </div>
+    <div id="grid"></div>
+  </main>
+
+  <footer>
     <label><input type="checkbox" id="all"> Select all</label>
-    <span class="spacer"></span>
     <button id="download" class="primary" disabled>Download</button>
-  </div>
-  <div class="bar">
-    <button id="record">Record tab</button>
-    <button id="ytdlp" title="Download this page's video with yt-dlp (YouTube and many more sites)">yt-dlp</button>
-    <select id="quality" aria-label="yt-dlp quality">
-      <option value="compatible">Best compatible (H.264)</option>
-      <option value="max">Max quality (4K, VP9/AV1)</option>
-      <option value="1080p">1080p</option>
-      <option value="720p">720p</option>
-      <option value="480p">480p</option>
-      <option value="360p">360p</option>
-      <option value="mp3">Audio only (MP3)</option>
-    </select>
-    <button id="stopLive" hidden>Stop live</button>
-  </div>
-  <div id="error" class="note error" hidden>
-    <span id="errorText" class="spacer"></span>
-    <button id="dismiss" aria-label="Dismiss">×</button>
-  </div>
-  <div id="saved" class="note" hidden>
-    <span id="savedText" class="spacer"></span>
-    <button id="openFolder">Open folder</button>
-  </div>
-  <div id="siteLoading" class="note" hidden>Getting this video with sound…</div>
-  <div id="hint" class="note" hidden>This page plays video through a stream player (blob:). If it isn't listed, use Record tab.</div>
-  <div id="grid"></div>
+  </footer>
   <script type="module" src="popup.js"></script>
 </body>
 </html>
