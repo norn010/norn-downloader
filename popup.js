@@ -170,11 +170,15 @@ $('#dismiss').onclick = () => {
 };
 
 // yt-dlp saves straight to disk, outside Chrome's download list, so say where the last one went
-$('#ytdlp').disabled = !/^https?:/.test(tab.url ?? '');
+$('#ytdlp').disabled = $('#quality').disabled = !/^https?:/.test(tab.url ?? '');
 $('#ytdlp').onclick = async () => {
-  await chrome.runtime.sendMessage({ type: 'ytdlp', url: tab.url });
+  await chrome.runtime.sendMessage({ type: 'ytdlp', url: tab.url, quality: $('#quality').value });
   window.close();
 };
+// remember the last quality picked
+const { ytdlpQuality } = await chrome.storage.local.get('ytdlpQuality');
+if (ytdlpQuality) $('#quality').value = ytdlpQuality;
+$('#quality').onchange = () => chrome.storage.local.set({ ytdlpQuality: $('#quality').value });
 if (ytdlpSaved) {
   $('#savedText').textContent = `yt-dlp saved: ${ytdlpSaved.split(/[\\/]/).pop()}`;
   $('#saved').hidden = false;

@@ -114,12 +114,12 @@ const handlers = {
     await store.set({ lastError: null });
     await idleBadge();
   },
-  ytdlp: m => ytdlp(m.url),
+  ytdlp: m => ytdlp(m.url, m.quality),
 };
 
 // ---- yt-dlp handoff: the native messaging host installed by native/install.ps1 runs yt-dlp on this machine ----
 // An open native port keeps this worker alive until the download ends.
-function ytdlp(url) {
+function ytdlp(url, quality) {
   const port = chrome.runtime.connectNative('com.norn.ytdlp');
   let finished = false;
   port.onMessage.addListener(async m => {
@@ -139,7 +139,7 @@ function ytdlp(url) {
         : `The yt-dlp helper stopped${why ? `: ${why}` : ''}`,
     );
   });
-  port.postMessage({ type: 'download', url });
+  port.postMessage({ type: 'download', url, quality });
 }
 
 // ---- Facebook / Instagram videos with sound ----

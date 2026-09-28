@@ -47,19 +47,34 @@ export function toolEnv(tools, baseEnv, localAppData) {
   };
 }
 
-// Best MP4 that plays everywhere (H.264 video + AAC audio, merged by ffmpeg), one video only, saved as
-// "<title> [<id>].mp4" in outDir. YouTube also puts VP9/AV1 in .mp4, so the codec is asked for, with fallbacks
-// for videos that have no H.264. --print implies --quiet, so --progress keeps the progress lines coming.
-export function ytdlpArgs(url, outDir) {
+// yt-dlp format choice for each quality the popup offers. YouTube also puts VP9/AV1 in .mp4, so H.264 + AAC is
+// asked for by codec, with fallbacks for videos that have none; height caps take the closest smaller size.
+const capped = h =>
+  `bv*[vcodec^=avc1][height<=${h}]+ba[acodec^=mp4a]/b[vcodec^=avc1][height<=${h}]/bv*[height<=${h}]+ba/b[height<=${h}]/bv*+ba/b`;
+const QUALITY = {
+  compatible: { format: 'bv*[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1]/bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b', tag: '' },
+  max: { format: 'bv*+ba/b', tag: ' max' }, // may be VP9/AV1 up to 4K
+  '1080p': { format: capped(1080), tag: ' 1080p' },
+  '720p': { format: capped(720), tag: ' 720p' },
+  '480p': { format: capped(480), tag: ' 480p' },
+  '360p': { format: capped(360), tag: ' 360p' },
+  mp3: { format: 'ba/b', tag: '', audio: true },
+};
+
+// One video (not the playlist around it) saved in outDir as "<title> [<id>]<quality>.<ext>": MP4 merged by
+// ffmpeg, or MP3 for audio. Unknown qualities fall back to 'compatible', so nothing the extension sends reaches
+// yt-dlp as an option. --print implies --quiet, so --progress keeps the progress lines coming.
+export function ytdlpArgs(url, outDir, quality = 'compatible') {
+  const q = Object.hasOwn(QUALITY, quality) ? QUALITY[quality] : QUALITY.compatible;
   return [
     '--no-playlist',
     '--newline',
     '--progress',
     '--progress-template', 'download:NORN %(progress._percent_str)s',
     '--print', 'after_move:NORN_FILE %(filepath)s',
-    '-f', 'bv*[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1]/bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b',
-    '--merge-output-format', 'mp4',
-    '-o', path.join(outDir, '%(title).150B [%(id)s].%(ext)s'),
+    '-f', q.format,
+    ...(q.audio ? ['-x', '--audio-format', 'mp3', '--audio-quality', '0'] : ['--merge-output-format', 'mp4']),
+    '-o', path.join(outDir, `%(title).150B [%(id)s]${q.tag}.%(ext)s`),
     '--',
     url,
   ];

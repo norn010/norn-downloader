@@ -14,7 +14,8 @@
   .spacer { flex: 1; }
   button { font: inherit; padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px; background: none; color: inherit; cursor: pointer; }
   button[aria-pressed="true"], button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  button:disabled { opacity: .5; cursor: default; }
+  button:disabled, select:disabled { opacity: .5; cursor: default; }
+  select { flex: 1; min-width: 0; font: inherit; padding: 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: inherit; }
   .note { margin: 8px 10px 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
   #saved { display: flex; gap: 6px; align-items: center; }
   .note.error { display: flex; gap: 6px; align-items: start; border-color: var(--danger); color: var(--danger); white-space: pre-line; }
@@ -42,6 +43,15 @@
   <div class="bar">
     <button id="record">Record tab</button>
     <button id="ytdlp" title="Download this page's video with yt-dlp (YouTube and many more sites)">yt-dlp</button>
+    <select id="quality" aria-label="yt-dlp quality">
+      <option value="compatible">Best compatible (H.264)</option>
+      <option value="max">Max quality (4K, VP9/AV1)</option>
+      <option value="1080p">1080p</option>
+      <option value="720p">720p</option>
+      <option value="480p">480p</option>
+      <option value="360p">360p</option>
+      <option value="mp3">Audio only (MP3)</option>
+    </select>
     <button id="stopLive" hidden>Stop live</button>
   </div>
   <div id="error" class="note error" hidden>

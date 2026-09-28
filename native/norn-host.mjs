@@ -1,5 +1,5 @@
 // Native messaging host: Chrome starts it (through norn-host.bat) when the extension asks for a yt-dlp download.
-// In: {type:'download', url} or {type:'ping'}. Out: {type:'progress', percent}, {type:'done', file}, {type:'error', message},
+// In: {type:'download', url, quality?} or {type:'ping'}. Out: {type:'progress', percent}, {type:'done', file}, {type:'error', message},
 // {type:'pong'}. Nothing but framed messages may ever go to stdout.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -21,11 +21,11 @@ let running = 0;
 let inputClosed = false;
 const maybeExit = () => inputClosed && running === 0 && process.exit(0);
 
-function download(url) {
+function download(url, quality) {
   running++;
   let file = null;
   let error = '';
-  const child = spawn(command, ytdlpArgs(url, path.join(os.homedir(), 'Downloads')), { env, windowsHide: true });
+  const child = spawn(command, ytdlpArgs(url, path.join(os.homedir(), 'Downloads'), quality), { env, windowsHide: true });
   const readLines = stream => {
     let rest = '';
     stream.setEncoding('utf8');
@@ -56,7 +56,7 @@ process.stdin.on(
   'data',
   createDecoder(message => {
     if (message.type === 'ping') send({ type: 'pong' });
-    else if (message.type === 'download' && /^https?:\/\//.test(message.url)) download(message.url);
+    else if (message.type === 'download' && /^https?:\/\//.test(message.url)) download(message.url, message.quality);
     else send({ type: 'error', message: 'Unknown request' });
   }),
 );

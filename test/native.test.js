@@ -52,6 +52,32 @@ test('ytdlpArgs: H.264/AAC MP4, one video not a playlist, into the given folder,
   assert.ok(args.includes('--progress'), 'progress must survive the quiet mode --print implies');
 });
 
+test('ytdlpArgs quality: height caps keep H.264 first, max takes anything, audio becomes MP3, names say which', () => {
+  const out = 'C:\\Users\\me\\Downloads';
+  const url = 'https://www.youtube.com/watch?v=aBcDeFgHiJk';
+  const opt = (args, flag) => args[args.indexOf(flag) + 1];
+  const name = args => path.basename(opt(args, '-o'));
+
+  const p720 = ytdlpArgs(url, out, '720p');
+  assert.equal(opt(p720, '-f'), 'bv*[vcodec^=avc1][height<=720]+ba[acodec^=mp4a]/b[vcodec^=avc1][height<=720]/bv*[height<=720]+ba/b[height<=720]/bv*+ba/b');
+  assert.equal(opt(p720, '--merge-output-format'), 'mp4');
+  assert.equal(name(p720), '%(title).150B [%(id)s] 720p.%(ext)s');
+
+  const max = ytdlpArgs(url, out, 'max');
+  assert.equal(opt(max, '-f'), 'bv*+ba/b');
+  assert.equal(name(max), '%(title).150B [%(id)s] max.%(ext)s');
+
+  const mp3 = ytdlpArgs(url, out, 'mp3');
+  assert.equal(opt(mp3, '-f'), 'ba/b');
+  assert.equal(opt(mp3, '--audio-format'), 'mp3');
+  assert.ok(mp3.includes('-x') && !mp3.includes('--merge-output-format'));
+  assert.equal(name(mp3), '%(title).150B [%(id)s].%(ext)s');
+
+  // anything unexpected from the extension is treated as the default, never passed to yt-dlp
+  assert.deepEqual(ytdlpArgs(url, out, '--exec calc'), ytdlpArgs(url, out));
+  assert.equal(name(ytdlpArgs(url, out)), '%(title).150B [%(id)s].%(ext)s');
+});
+
 test('toolEnv runs the yt-dlp install.ps1 found, with ffmpeg and deno on PATH, even when Chrome\'s PATH is stale', () => {
   const tools = {
     ytdlp: 'C:\\W\\Packages\\yt-dlp\\yt-dlp.exe',
