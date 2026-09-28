@@ -35,8 +35,21 @@ export function parseLine(line) {
   return null;
 }
 
+// How to start yt-dlp. install.ps1 records where winget put yt-dlp, ffmpeg and deno (tools.json): winget may
+// only add them to the user PATH, which a Chrome started before the install doesn't see. Without that file,
+// fall back to PATH plus WinGet's Links folder.
+export function toolEnv(tools, baseEnv, localAppData) {
+  const dirs = [tools?.ffmpeg, tools?.deno].filter(Boolean).map(p => path.dirname(p));
+  dirs.push(path.join(localAppData ?? '', 'Microsoft', 'WinGet', 'Links'));
+  return {
+    command: tools?.ytdlp ?? 'yt-dlp',
+    env: { ...baseEnv, PATH: [...dirs, baseEnv.PATH ?? ''].join(path.delimiter) },
+  };
+}
+
 // Best MP4 that plays everywhere (H.264 video + AAC audio, merged by ffmpeg), one video only, saved as
-// "<title> [<id>].mp4" in outDir. --print implies --quiet, so --progress keeps the progress lines coming.
+// "<title> [<id>].mp4" in outDir. YouTube also puts VP9/AV1 in .mp4, so the codec is asked for, with fallbacks
+// for videos that have no H.264. --print implies --quiet, so --progress keeps the progress lines coming.
 export function ytdlpArgs(url, outDir) {
   return [
     '--no-playlist',
@@ -44,7 +57,7 @@ export function ytdlpArgs(url, outDir) {
     '--progress',
     '--progress-template', 'download:NORN %(progress._percent_str)s',
     '--print', 'after_move:NORN_FILE %(filepath)s',
-    '-f', 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b',
+    '-f', 'bv*[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1]/bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b',
     '--merge-output-format', 'mp4',
     '-o', path.join(outDir, '%(title).150B [%(id)s].%(ext)s'),
     '--',

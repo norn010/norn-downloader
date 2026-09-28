@@ -21,6 +21,17 @@ foreach ($package in 'yt-dlp.yt-dlp', 'Gyan.FFmpeg', 'DenoLand.Deno') {
 
 $utf8 = New-Object System.Text.UTF8Encoding $false # Chrome rejects a manifest that starts with a BOM
 
+# winget may only add the tools to the user PATH, which an already-running Chrome (and so the helper) doesn't see:
+# record where they are for the helper
+$env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+$tools = [ordered]@{}
+foreach ($tool in 'yt-dlp', 'ffmpeg', 'deno') {
+  $found = Get-Command $tool -ErrorAction SilentlyContinue
+  if (-not $found) { throw "$tool was installed but can't be found; open a new PowerShell window and run this script again" }
+  $tools[$tool -replace '-', ''] = $found.Source
+}
+[IO.File]::WriteAllText((Join-Path $here 'tools.json'), ($tools | ConvertTo-Json), $utf8)
+
 # Chrome starts the helper through this .bat; point it at this machine's node.exe
 $node = (Get-Command node -ErrorAction Stop).Source
 $bat = Join-Path $here 'norn-host.bat'

@@ -2,15 +2,20 @@
 // In: {type:'download', url} or {type:'ping'}. Out: {type:'progress', percent}, {type:'done', file}, {type:'error', message},
 // {type:'pong'}. Nothing but framed messages may ever go to stdout.
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { encodeMessage, createDecoder, parseLine, ytdlpArgs } from './protocol.mjs';
+import { encodeMessage, createDecoder, parseLine, ytdlpArgs, toolEnv } from './protocol.mjs';
 
 const send = message => process.stdout.write(encodeMessage(message));
 
-// winget puts yt-dlp, ffmpeg and deno in this folder; Chrome may have started before it joined PATH
-const links = path.join(process.env.LOCALAPPDATA ?? '', 'Microsoft', 'WinGet', 'Links');
-const env = { ...process.env, PATH: `${links}${path.delimiter}${process.env.PATH ?? ''}` };
+let tools = null;
+try {
+  tools = JSON.parse(fs.readFileSync(new URL('./tools.json', import.meta.url), 'utf8'));
+} catch {
+  // install.ps1 not run yet: rely on PATH
+}
+const { command, env } = toolEnv(tools, process.env, process.env.LOCALAPPDATA);
 
 let running = 0;
 let inputClosed = false;
@@ -20,7 +25,7 @@ function download(url) {
   running++;
   let file = null;
   let error = '';
-  const child = spawn('yt-dlp', ytdlpArgs(url, path.join(os.homedir(), 'Downloads')), { env, windowsHide: true });
+  const child = spawn(command, ytdlpArgs(url, path.join(os.homedir(), 'Downloads')), { env, windowsHide: true });
   const readLines = stream => {
     let rest = '';
     stream.setEncoding('utf8');

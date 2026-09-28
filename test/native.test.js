@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import os from 'node:os';
+import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { encodeMessage, createDecoder, parseLine, ytdlpArgs } from '../native/protocol.mjs';
+import { encodeMessage, createDecoder, parseLine, ytdlpArgs, toolEnv } from '../native/protocol.mjs';
 
 test('encodeMessage frames JSON the way Chrome native messaging expects: 4-byte little-endian length, then UTF-8', () => {
   const frame = encodeMessage({ type: 'progress', percent: 42.5, note: 'วิดีโอ' });
@@ -44,14 +45,36 @@ test('ytdlpArgs: H.264/AAC MP4, one video not a playlist, into the given folder,
   const args = ytdlpArgs('https://www.youtube.com/watch?v=aBcDeFgHiJk&list=PL1', out);
   assert.deepEqual(args.slice(-2), ['--', 'https://www.youtube.com/watch?v=aBcDeFgHiJk&list=PL1']);
   assert.ok(args.includes('--no-playlist'));
-  assert.equal(args[args.indexOf('-f') + 1], 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b');
+  // YouTube also serves VP9/AV1 inside .mp4, so ask for the codec (avc1 = H.264, mp4a = AAC), then fall back
+  assert.equal(args[args.indexOf('-f') + 1], 'bv*[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1]/bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b');
   assert.equal(args[args.indexOf('--merge-output-format') + 1], 'mp4');
   assert.ok(args[args.indexOf('-o') + 1].startsWith(out));
   assert.ok(args.includes('--progress'), 'progress must survive the quiet mode --print implies');
 });
 
+test('toolEnv runs the yt-dlp install.ps1 found, with ffmpeg and deno on PATH, even when Chrome\'s PATH is stale', () => {
+  const tools = {
+    ytdlp: 'C:\\W\\Packages\\yt-dlp\\yt-dlp.exe',
+    ffmpeg: 'C:\\W\\Packages\\FFmpeg\\bin\\ffmpeg.exe',
+    deno: 'C:\\W\\Packages\\Deno\\deno.exe',
+  };
+  const { command, env } = toolEnv(tools, { PATH: 'C:\\Windows', OTHER: '1' }, 'C:\\L');
+  assert.equal(command, 'C:\\W\\Packages\\yt-dlp\\yt-dlp.exe');
+  assert.deepEqual(env.PATH.split(path.delimiter), [
+    'C:\\W\\Packages\\FFmpeg\\bin', 'C:\\W\\Packages\\Deno', 'C:\\L\\Microsoft\\WinGet\\Links', 'C:\\Windows',
+  ]);
+  assert.equal(env.OTHER, '1');
+  // no tools.json yet: fall back to PATH lookup plus WinGet's Links folder
+  const bare = toolEnv(null, { PATH: 'C:\\Windows' }, 'C:\\L');
+  assert.equal(bare.command, 'yt-dlp');
+  assert.deepEqual(bare.env.PATH.split(path.delimiter), ['C:\\L\\Microsoft\\WinGet\\Links', 'C:\\Windows']);
+});
+
 test('the host process answers ping, and reports a missing yt-dlp instead of dying silently', async () => {
-  const host = fileURLToPath(new URL('../native/norn-host.mjs', import.meta.url));
+  // a copy without tools.json, so an installed yt-dlp can't be found either
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'norn-host-'));
+  for (const f of ['norn-host.mjs', 'protocol.mjs']) fs.copyFileSync(fileURLToPath(new URL(`../native/${f}`, import.meta.url)), path.join(dir, f));
+  const host = path.join(dir, 'norn-host.mjs');
   // no yt-dlp reachable: empty PATH and a LOCALAPPDATA without WinGet links
   const child = spawn(process.execPath, [host], { env: { PATH: '', LOCALAPPDATA: os.tmpdir(), SystemRoot: process.env.SystemRoot } });
   const got = [];
