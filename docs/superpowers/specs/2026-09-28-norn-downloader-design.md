@@ -77,10 +77,13 @@ The loaded page's `<script type="application/json">` data carries ready-made pro
 `{"browser_native_sd_url":…,"browser_native_hd_url":…|null,"id":"<video id>"}` (verified on a real reel, logged out;
 a re-fetch of the page URL does not contain them, so they are read from the loaded page).
 
-1. `scanPage` returns the text of JSON scripts containing `browser_native` as `fbJson`.
-2. `pageVideoItems(fbJson, tab.url)`: the video whose id is in the URL (`/reel/<id>`, `/videos/<id>`, `?v=<digits>`), else all found; HD then SD, labelled "HD · with sound" / "SD · with sound", named `facebook-<id>-hd|sd.mp4`; http(s) only.
+Verified logged in too: a directly loaded reel URL carries the data; a reel reached by clicking or scrolling inside Facebook does not.
+
+1. The popup injects `facebookData()`, which returns the text of JSON scripts containing `browser_native`.
+2. `pageVideoItems(data, tab.url)`: only the video whose id is in a facebook.com URL (`/reel/<id>`, `/videos/<id>`, `?v=<digits>`), never the preloaded next reels; else (no id) all found. HD then SD, labelled "HD · with sound" / "SD · with sound", named `facebook-<id>-hd|sd.mp4`; http(s) only.
 3. These items go first in the popup, with a `<video preload=metadata>` thumbnail.
-4. If the page has such data but not for the URL's id (user scrolled to a reel Facebook fetched later), the popup asks to refresh the page.
+4. On facebook.com, `hideFacebookPieces` drops every fbcdn video/audio response (DASH pieces: video-only or audio-only, often of the next reel). fbcdn images stay.
+5. If the URL names a video but the page doesn't carry it, a "Get HD with sound" button opens the URL in a muted inactive tab, waits for load (20 s limit), injects `facebookData()`, closes the tab and adds the items.
 
 ## Flow 3 — Downloads
 

@@ -111,28 +111,39 @@ export function pageVideos(text) {
   return [...out.values()];
 }
 
-// Numeric Facebook video id from /reel/<id>, /videos/<id> or ?v=<id>.
-export function videoIdFromUrl(url) {
+const hostIs = (url, re) => {
   try {
-    const u = new URL(url);
-    const v = u.searchParams.get('v');
-    return u.pathname.match(/\/(?:reel|videos)\/(\d+)/)?.[1] ?? (/^\d+$/.test(v) ? v : null);
+    return re.test(new URL(url).hostname);
   } catch {
-    return null;
+    return false;
   }
+};
+const FACEBOOK = /(^|\.)facebook\.com$/;
+
+// Numeric video id from a Facebook /reel/<id>, /videos/<id> or ?v=<id> URL; null anywhere else.
+export function videoIdFromUrl(url) {
+  if (!hostIs(url, FACEBOOK)) return null;
+  const u = new URL(url);
+  const v = u.searchParams.get('v');
+  return u.pathname.match(/\/(?:reel|videos)\/(\d+)/)?.[1] ?? (/^\d+$/.test(v) ? v : null);
 }
 
-// Popup items for the video the page is about (the id in its URL, else every one found).
-// missing: the URL names a video the page source doesn't carry (Facebook fetched it after load) → reload.
+// Popup items for the video the page is about: the id in its URL (never the preloaded next reels),
+// else every one found. HD first; http(s) only.
 export function pageVideoItems(text, pageUrl) {
-  const all = pageVideos(text);
   const id = videoIdFromUrl(pageUrl);
-  const mine = id ? all.filter(v => v.id === id) : all;
-  const items = mine
+  return pageVideos(text)
+    .filter(v => !id || v.id === id)
     .flatMap(v => [
       v.hd && { url: v.hd, kind: 'video', size: null, label: 'HD · with sound', filename: `facebook-${v.id}-hd.mp4` },
       v.sd && { url: v.sd, kind: 'video', size: null, label: 'SD · with sound', filename: `facebook-${v.id}-sd.mp4` },
     ])
     .filter(i => i && /^https?:/.test(i.url));
-  return { items, missing: all.length > 0 && mine.length === 0 };
 }
+
+// On Facebook every fbcdn video/audio response is a DASH piece (video-only or audio-only, often of the
+// next reel), which only confuses. The with-sound files come from pageVideoItems instead.
+export const hideFacebookPieces = (items, pageUrl) =>
+  hostIs(pageUrl, FACEBOOK)
+    ? items.filter(i => !((i.kind === 'video' || i.kind === 'audio') && hostIs(i.url, /(^|\.)fbcdn\.net$/)))
+    : items;

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  classify, cleanUrl, addItem, MAX_ITEMS, safeName, srcsetBest, mergeItems, pageVideos, videoIdFromUrl, pageVideoItems,
+  classify, cleanUrl, addItem, MAX_ITEMS, safeName, srcsetBest, mergeItems, pageVideos, videoIdFromUrl, pageVideoItems, hideFacebookPieces,
 } from '../media.js';
 
 test('classify uses Content-Type first', () => {
@@ -118,7 +118,8 @@ test('mergeItems: network newest first, then page finds; http(s) only; deduped a
 });
 
 // Same shape as the JSON Facebook embeds in <script type="application/json"> on a reel page.
-const FB = String.raw`{"videoDeliveryLegacyFields":{"browser_native_sd_url":"https:\/\/video.fbcdn.test\/o1\/v\/sd.mp4?efg=eyJ9%3D&tag=progressive_h264-basic-gen2_360p","browser_native_hd_url":"https:\/\/video.fbcdn.test\/o1\/v\/hd.mp4?tag=progressive_h264-basic-gen2_720p","id":"1000000000000001"},"a":{"videoDeliveryLegacyFields":{"browser_native_sd_url":"https:\/\/video.fbcdn.test\/sd2.mp4","browser_native_hd_url":null,"id":"1000000000000002"}},"again":{"browser_native_sd_url":"https:\/\/video.fbcdn.test\/dup.mp4","browser_native_hd_url":null,"id":"1000000000000001"},"bad":{"browser_native_sd_url":"javascript:alert(1)","browser_native_hd_url":null,"id":"777"}}`;
+// (the escaped percent sign is spliced in so no tool can pre-decode it)
+const FB = String.raw`{"videoDeliveryLegacyFields":{"browser_native_sd_url":"https:\/\/video.fbcdn.test\/o1\/v\/sd.mp4?efg=eyJ9PCT3D&tag=progressive_h264-basic-gen2_360p","browser_native_hd_url":"https:\/\/video.fbcdn.test\/o1\/v\/hd.mp4?tag=progressive_h264-basic-gen2_720p","id":"1000000000000001"},"a":{"videoDeliveryLegacyFields":{"browser_native_sd_url":"https:\/\/video.fbcdn.test\/sd2.mp4","browser_native_hd_url":null,"id":"1000000000000002"}},"again":{"browser_native_sd_url":"https:\/\/video.fbcdn.test\/dup.mp4","browser_native_hd_url":null,"id":"1000000000000001"},"bad":{"browser_native_sd_url":"javascript:alert(1)","browser_native_hd_url":null,"id":"777"}}`.replace('PCT', '\\' + 'u0025');
 const SD1 = 'https://video.fbcdn.test/o1/v/sd.mp4?efg=eyJ9%3D&tag=progressive_h264-basic-gen2_360p';
 const HD1 = 'https://video.fbcdn.test/o1/v/hd.mp4?tag=progressive_h264-basic-gen2_720p';
 
@@ -138,25 +139,35 @@ test('videoIdFromUrl finds Facebook reel/video ids only', () => {
   assert.equal(videoIdFromUrl('https://www.facebook.com/SomePage/videos/987654321/'), '987654321');
   assert.equal(videoIdFromUrl('https://www.youtube.com/watch?v=kJiHgFeDcBa'), null);
   assert.equal(videoIdFromUrl('https://www.facebook.com/'), null);
+  assert.equal(videoIdFromUrl('https://m.facebook.com/reel/42'), '42');
+  assert.equal(videoIdFromUrl('https://example.com/reel/1000000000000001'), null);
   assert.equal(videoIdFromUrl(undefined), null);
 });
 
-test('pageVideoItems: the reel in the URL, HD first, named by id; http(s) only', () => {
-  assert.deepEqual(pageVideoItems(FB, 'https://www.facebook.com/reel/1000000000000001'), {
-    items: [
-      { url: HD1, kind: 'video', size: null, label: 'HD · with sound', filename: 'facebook-1000000000000001-hd.mp4' },
-      { url: SD1, kind: 'video', size: null, label: 'SD · with sound', filename: 'facebook-1000000000000001-sd.mp4' },
-    ],
-    missing: false,
-  });
-  assert.deepEqual(pageVideoItems(FB, 'https://www.facebook.com/').items.map(i => i.filename), [
+test('pageVideoItems: only the reel in the URL (never the preloaded next ones), HD first, named by id; http(s) only', () => {
+  assert.deepEqual(pageVideoItems(FB, 'https://www.facebook.com/reel/1000000000000001'), [
+    { url: HD1, kind: 'video', size: null, label: 'HD · with sound', filename: 'facebook-1000000000000001-hd.mp4' },
+    { url: SD1, kind: 'video', size: null, label: 'SD · with sound', filename: 'facebook-1000000000000001-sd.mp4' },
+  ]);
+  assert.deepEqual(pageVideoItems(FB, 'https://www.facebook.com/').map(i => i.filename), [
     'facebook-1000000000000001-hd.mp4',
     'facebook-1000000000000001-sd.mp4',
     'facebook-1000000000000002-sd.mp4',
   ]);
+  assert.deepEqual(pageVideoItems(FB, 'https://www.facebook.com/reel/999'), []);
 });
 
-test('pageVideoItems: flags a reel the page source does not carry (scrolled to later) so the popup can say reload', () => {
-  assert.deepEqual(pageVideoItems(FB, 'https://www.facebook.com/reel/999'), { items: [], missing: true });
-  assert.deepEqual(pageVideoItems('', 'https://www.facebook.com/reel/999'), { items: [], missing: false });
+test('hideFacebookPieces drops fbcdn video/audio pieces on Facebook pages only', () => {
+  const items = [
+    { url: 'https://video.fbkk22-4.fna.fbcdn.net/o1/v/t2/f2/m69/AQM.mp4?efg=x', kind: 'video' },
+    { url: 'https://video.fbkk22-4.fna.fbcdn.net/o1/v/t2/f2/m69/AQN.mp4?efg=y', kind: 'audio' },
+    { url: 'https://scontent.fbkk22-4.fna.fbcdn.net/v/photo.jpg', kind: 'image' },
+    { url: 'https://cdn.example/clip.mp4', kind: 'video' },
+  ];
+  assert.deepEqual(hideFacebookPieces(items, 'https://www.facebook.com/reel/1').map(i => i.url), [
+    'https://scontent.fbkk22-4.fna.fbcdn.net/v/photo.jpg',
+    'https://cdn.example/clip.mp4',
+  ]);
+  assert.equal(hideFacebookPieces(items, 'https://example.com/').length, 4);
+  assert.equal(hideFacebookPieces(items, undefined).length, 4);
 });
