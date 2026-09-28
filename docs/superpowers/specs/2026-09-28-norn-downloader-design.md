@@ -70,22 +70,26 @@ one-shot scan function with `chrome.scripting.executeScript`.
 4. UI: filter buttons with counts (All / Images / Videos incl. audio / Streams), grid of cards (image thumbnail or type label, filename, size, checkbox), Select all (visible items), Download N, Record tab ⇄ Stop recording, Stop live (when `status.live`), `lastError` banner (dismiss → background clears it), hint when a `<video>` plays a `blob:` URL.
 5. Page-derived strings only go into the DOM via `textContent`/properties, never `innerHTML`.
 
-## Flow 2b — Facebook videos with sound (added after first release)
+## Flow 2b — Facebook / Instagram videos with sound (added after first release)
 
-Facebook plays reels as DASH (video-only pieces + separate audio), so sniffed pieces have no sound.
-The loaded page's `<script type="application/json">` data carries ready-made progressive MP4s with sound:
-`{"browser_native_sd_url":…,"browser_native_hd_url":…|null,"id":"<video id>"}` (verified on a real reel, logged out;
-a re-fetch of the page URL does not contain them, so they are read from the loaded page).
+Facebook and Instagram play video as DASH (video-only pieces + separate audio), so sniffed pieces have no sound.
+The loaded page's `<script type="application/json">` blocks (each one JSON document) carry ready-made progressive MP4s
+with sound. Shapes verified on real pages (2026-09-28), logged out and logged in:
 
-Verified logged in too: a directly loaded reel URL carries the data; a reel reached by clicking or scrolling inside Facebook does not.
-Logged in, Facebook may instead (or also) send the newer shape `{…,"progressive_urls":[{"progressive_url":…,"metadata":{"quality":"SD"|"HD"}}],…,"id":"<video id>"}`
-(the id is a later sibling key). `pageVideos` reads both shapes and merges them per id; all such URLs tested carried sound.
+- Facebook, older (seen logged out): `{"browser_native_sd_url":…,"browser_native_hd_url":…|null,"id":"<video id>"}`
+- Facebook, newer (seen logged in): `{…,"progressive_urls":[{"progressive_url":…,"metadata":{"quality":"SD"|"HD"}}],…,"id":"<video id>"}`
+- Instagram: `{"code":"<post code>",…,"video_versions":[{"width","height","url"}]}`; carousel children carry `video_versions` without a code.
 
-1. The popup asks background (`fbItems {tabId, url}`, answered asynchronously). Background injects `facebookData()` into the tab, which returns the text of JSON scripts containing `browser_native`. Doing this in background means a background tab (step 5) is always closed, even if the popup closes. Results are cached per video id in `storage.session` (`fb:<id>`).
-2. `pageVideoItems(data, tab.url)`: only the video whose id is in a facebook.com URL (`/reel/<id>`, `/videos/<id>`, `?v=<digits>`), never the preloaded next reels; else (no id) all found. HD then SD, labelled "HD · with sound" / "SD · with sound", named `facebook-<id>-hd|sd.mp4`; http(s) only.
-3. These items go first in the popup, with a `<video preload=metadata>` thumbnail.
-4. On facebook.com, `hideFacebookPieces` drops every fbcdn video/audio response (DASH pieces: video-only or audio-only, often of the next reel). fbcdn images stay.
-5. If the URL names a video but the page doesn't carry it, background automatically opens the URL in a muted inactive tab, waits for load (20 s limit), injects `facebookData()`, closes the tab and returns the items. The popup shows "Getting this video with sound…" meanwhile, and an error suggesting Record tab if nothing is found.
+A re-fetch of the page URL does not contain them; a directly loaded URL does; a video reached by clicking or
+scrolling inside the site does not. Every such URL tested carried sound.
+
+1. The popup asks background (`videoItems {tabId, url}`, answered asynchronously). Background injects `pageData()` into the tab, which returns the texts of JSON blocks containing `browser_native`, `"progressive_urls"` or `"video_versions"`. Doing this in background means a background tab (step 5) is always closed, even if the popup closes. Results are cached per video id in `storage.session` (`video:<id>`).
+2. `pageVideos(texts)` parses each block with `JSON.parse` (invalid blocks skipped) and walks the tree for the three shapes; Facebook entries merge per id, Instagram gives one entry per video (largest version; HD when its short side ≥ 720, else SD) under the nearest `code`.
+3. `pageVideoItems(texts, tab.url)`: only the video whose id is in the URL (Facebook `/reel/<id>`, `/videos/<id>`, `?v=<digits>`; Instagram `/p|reel|reels|tv/<code>`), never preloaded next ones; else (no id) all found. HD then SD, labelled "HD · with sound" / "SD · with sound", named `<site>-<id>-hd|sd.mp4`; http(s) only. These go first in the popup with a `<video preload=metadata>` thumbnail.
+4. On facebook.com and instagram.com, `hideSitePieces` drops every fbcdn/cdninstagram video/audio response (DASH pieces). Images stay.
+5. If the URL names a video but the page doesn't carry it, background automatically opens the URL in a muted inactive tab, waits for load (20 s limit), injects `pageData()`, closes the tab and returns the items. The popup shows "Getting this video with sound…" meanwhile, and an error suggesting Record tab if nothing is found.
+
+Not covered: Instagram stories (different page type).
 
 ## Flow 3 — Downloads
 

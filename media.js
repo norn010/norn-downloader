@@ -97,75 +97,56 @@ export function mergeItems(net, scan) {
   return [...out.values()];
 }
 
-// Facebook embeds a ready-made progressive MP4 (video + sound) per video in the page's JSON:
-// {"browser_native_sd_url":"…","browser_native_hd_url":"…"|null,"id":"…"}. Returns [{ id, sd, hd }], one per id.
-// ponytail: tied to Facebook's current key names; update this pattern when they change.
-const FB_VIDEO =
-  /"browser_native_sd_url":("(?:[^"\\]|\\.)*"|null),"browser_native_hd_url":("(?:[^"\\]|\\.)*"|null),"id":"(\d+)"/g;
-
-export function pageVideos(text) {
-  const out = new Map();
-  const add = (id, sd, hd) => {
-    const v = out.get(id) ?? out.set(id, { id, sd: null, hd: null }).get(id);
-    v.sd ??= sd;
-    v.hd ??= hd;
+// Facebook and Instagram play video as DASH (video-only + audio-only pieces), but their pages embed ready-made
+// MP4s with sound in <script type="application/json"> blocks. `texts` holds those blocks; each is one JSON document.
+// Shapes seen (2026-09-28):
+//   Facebook, older:  {"browser_native_sd_url":…,"browser_native_hd_url":…|null,"id":"<video id>"}
+//   Facebook, newer:  {…,"progressive_urls":[{"progressive_url":…,"metadata":{"quality":"SD"|"HD"}}],…,"id":…}
+//   Instagram:        {"code":"<post code>",…,"video_versions":[{"width","height","url"}]} (carousel children
+//                     carry video_versions without a code of their own)
+// Returns [{ site, id, sd, hd }]: Facebook merged per id, Instagram one entry per video.
+// ponytail: tied to these key names; add a shape here when a site changes them.
+export function pageVideos(texts) {
+  const out = [];
+  const fb = new Map();
+  const facebook = (id, sd, hd) => {
+    const v = fb.get(id) ?? (out.push({ site: 'facebook', id, sd: null, hd: null }), fb.set(id, out.at(-1)).get(id));
+    v.sd ??= typeof sd === 'string' ? sd : null;
+    v.hd ??= typeof hd === 'string' ? hd : null;
   };
-  for (const [, sd, hd, id] of text.matchAll(FB_VIDEO)) add(id, JSON.parse(sd), JSON.parse(hd));
-  // Newer shape (logged in): {…,"progressive_urls":[{"progressive_url":"…","metadata":{"quality":"HD"|"SD"}}],…,"id":"…"}
-  for (const m of text.matchAll(/"progressive_urls":\[/g)) {
-    const start = m.index + m[0].length - 1;
-    const end = jsonEnd(text, start);
-    const id = end > 0 && siblingId(text, end);
-    if (!id) continue;
-    let list;
-    try {
-      list = JSON.parse(text.slice(start, end));
-    } catch {
-      continue;
+  const visit = (node, code) => {
+    if (typeof node.id === 'string' && ('browser_native_sd_url' in node || 'browser_native_hd_url' in node)) {
+      facebook(node.id, node.browser_native_sd_url, node.browser_native_hd_url);
     }
-    const url = hd => list.find(e => (e?.metadata?.quality === 'HD') === hd)?.progressive_url ?? null;
-    add(id, url(false), url(true));
-  }
-  return [...out.values()];
-}
-
-// Index just past the JSON array/object opening at `i` (strings respected), or -1 if it never closes.
-function jsonEnd(text, i) {
-  let depth = 0;
-  for (let j = i; j < text.length; j++) {
-    const c = text[j];
-    if (c === '"') j = stringEnd(text, j);
-    else if (c === '[' || c === '{') depth++;
-    else if ((c === ']' || c === '}') && --depth === 0) return j + 1;
-  }
-  return -1;
-}
-
-// Index of the closing quote of the string opening at `i`.
-function stringEnd(text, i) {
-  let j = i + 1;
-  while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
-  return j;
-}
-
-// The "id" of the object we are inside at `i`, found among its later keys (nested objects skipped).
-function siblingId(text, i) {
-  let depth = 0;
-  for (let j = i; j < text.length; j++) {
-    const c = text[j];
-    if (c === '"') {
-      if (depth === 0) {
-        const id = text.slice(j, j + 40).match(/^"id":"(\d+)"/);
-        if (id) return id[1];
+    if (typeof node.id === 'string' && Array.isArray(node.progressive_urls)) {
+      const url = hd => node.progressive_urls.find(e => (e?.metadata?.quality === 'HD') === hd)?.progressive_url;
+      facebook(node.id, url(false), url(true));
+    }
+    if (code && Array.isArray(node.video_versions)) {
+      const best = node.video_versions
+        .filter(v => typeof v?.url === 'string')
+        .reduce((a, b) => (!a || b.width * b.height > a.width * a.height ? b : a), null);
+      if (best) {
+        const hd = Math.min(best.width, best.height) >= 720;
+        out.push({ site: 'instagram', id: code, sd: hd ? null : best.url, hd: hd ? best.url : null });
       }
-      j = stringEnd(text, j);
-    } else if (c === '[' || c === '{') depth++;
-    else if (c === ']' || c === '}') {
-      if (depth === 0) return null; // parent closed without an id
-      depth--;
+    }
+  };
+  const walk = (node, code) => {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) return node.forEach(x => walk(x, code));
+    code = typeof node.code === 'string' ? node.code : code;
+    visit(node, code);
+    for (const key in node) walk(node[key], code);
+  };
+  for (const text of texts) {
+    try {
+      walk(JSON.parse(text));
+    } catch {
+      // not a JSON document; skip it
     }
   }
-  return null;
+  return out;
 }
 
 const hostIs = (url, re) => {
@@ -176,31 +157,40 @@ const hostIs = (url, re) => {
   }
 };
 const FACEBOOK = /(^|\.)facebook\.com$/;
+const INSTAGRAM = /(^|\.)instagram\.com$/;
 
-// Numeric video id from a Facebook /reel/<id>, /videos/<id> or ?v=<id> URL; null anywhere else.
+// The video a page is about: Facebook /reel/<id>, /videos/<id>, ?v=<id>; Instagram /p|reel|reels|tv/<code>.
+// null anywhere else.
 export function videoIdFromUrl(url) {
+  if (hostIs(url, INSTAGRAM)) return new URL(url).pathname.match(/^\/(?:p|reels?|tv)\/([A-Za-z0-9_-]+)/)?.[1] ?? null;
   if (!hostIs(url, FACEBOOK)) return null;
   const u = new URL(url);
   const v = u.searchParams.get('v');
   return u.pathname.match(/\/(?:reel|videos)\/(\d+)/)?.[1] ?? (/^\d+$/.test(v) ? v : null);
 }
 
-// Popup items for the video the page is about: the id in its URL (never the preloaded next reels),
-// else every one found. HD first; http(s) only.
-export function pageVideoItems(text, pageUrl) {
+// Popup items for the video the page is about (the id in its URL, never preloaded next ones), else every one
+// found. HD first; http(s) only.
+export function pageVideoItems(texts, pageUrl) {
   const id = videoIdFromUrl(pageUrl);
-  return pageVideos(text)
+  const item = (v, q) => ({
+    url: v[q],
+    kind: 'video',
+    size: null,
+    label: `${q.toUpperCase()} · with sound`,
+    filename: `${v.site}-${v.id}-${q}.mp4`,
+  });
+  return pageVideos(texts)
     .filter(v => !id || v.id === id)
-    .flatMap(v => [
-      v.hd && { url: v.hd, kind: 'video', size: null, label: 'HD · with sound', filename: `facebook-${v.id}-hd.mp4` },
-      v.sd && { url: v.sd, kind: 'video', size: null, label: 'SD · with sound', filename: `facebook-${v.id}-sd.mp4` },
-    ])
+    .flatMap(v => [v.hd && item(v, 'hd'), v.sd && item(v, 'sd')])
     .filter(i => i && /^https?:/.test(i.url));
 }
 
-// On Facebook every fbcdn video/audio response is a DASH piece (video-only or audio-only, often of the
-// next reel), which only confuses. The with-sound files come from pageVideoItems instead.
-export const hideFacebookPieces = (items, pageUrl) =>
-  hostIs(pageUrl, FACEBOOK)
-    ? items.filter(i => !((i.kind === 'video' || i.kind === 'audio') && hostIs(i.url, /(^|\.)fbcdn\.net$/)))
+// On Facebook and Instagram every fbcdn/cdninstagram video or audio response is a DASH piece (video-only or
+// audio-only, often of the next video), which only confuses. The with-sound files come from pageVideoItems.
+export const hideSitePieces = (items, pageUrl) =>
+  hostIs(pageUrl, FACEBOOK) || hostIs(pageUrl, INSTAGRAM)
+    ? items.filter(
+        i => !((i.kind === 'video' || i.kind === 'audio') && hostIs(i.url, /(^|\.)(fbcdn\.net|cdninstagram\.com)$/)),
+      )
     : items;

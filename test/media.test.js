@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  classify, cleanUrl, addItem, MAX_ITEMS, safeName, srcsetBest, mergeItems, pageVideos, videoIdFromUrl, pageVideoItems, hideFacebookPieces,
+  classify, cleanUrl, addItem, MAX_ITEMS, safeName, srcsetBest, mergeItems, pageVideos, videoIdFromUrl, pageVideoItems, hideSitePieces,
 } from '../media.js';
 
 test('classify uses Content-Type first', () => {
@@ -117,79 +117,115 @@ test('mergeItems: network newest first, then page finds; http(s) only; deduped a
   ]);
 });
 
-// Same shape as the JSON Facebook embeds in <script type="application/json"> on a reel page.
+// Page data comes as the text of each <script type="application/json"> block; each block is one JSON document.
+
+// Older Facebook shape (logged out): videoDeliveryLegacyFields with browser_native_*_url.
 // (the escaped percent sign is spliced in so no tool can pre-decode it)
 const FB = String.raw`{"videoDeliveryLegacyFields":{"browser_native_sd_url":"https:\/\/video.fbcdn.test\/o1\/v\/sd.mp4?efg=eyJ9PCT3D&tag=progressive_h264-basic-gen2_360p","browser_native_hd_url":"https:\/\/video.fbcdn.test\/o1\/v\/hd.mp4?tag=progressive_h264-basic-gen2_720p","id":"1000000000000001"},"a":{"videoDeliveryLegacyFields":{"browser_native_sd_url":"https:\/\/video.fbcdn.test\/sd2.mp4","browser_native_hd_url":null,"id":"1000000000000002"}},"again":{"browser_native_sd_url":"https:\/\/video.fbcdn.test\/dup.mp4","browser_native_hd_url":null,"id":"1000000000000001"},"bad":{"browser_native_sd_url":"javascript:alert(1)","browser_native_hd_url":null,"id":"777"}}`.replace('PCT', '\\' + 'u0025');
 const SD1 = 'https://video.fbcdn.test/o1/v/sd.mp4?efg=eyJ9%3D&tag=progressive_h264-basic-gen2_360p';
 const HD1 = 'https://video.fbcdn.test/o1/v/hd.mp4?tag=progressive_h264-basic-gen2_720p';
 
-test('pageVideos reads Facebook progressive URLs, unescapes them, one entry per id', () => {
-  assert.deepEqual(pageVideos(FB), [
-    { id: '1000000000000001', sd: SD1, hd: HD1 },
-    { id: '1000000000000002', sd: 'https://video.fbcdn.test/sd2.mp4', hd: null },
-    { id: '777', sd: 'javascript:alert(1)', hd: null },
-  ]);
-  assert.deepEqual(pageVideos('<html>nothing here</html>'), []);
+// Newer Facebook shape (logged in, verified 2026-09-28): progressive_urls with quality labels; id after them.
+const FB_NEW = String.raw`{"data":{"videoDeliveryResponseFragment":{"videoDeliveryResponseResult":{"dash_manifests":[{"manifest_xml":"<MPD>[x]{y}</MPD>"}],"dash_manifest_urls":[],"progressive_urls":[{"progressive_url":"https:\/\/video.fbcdn.test\/n\/sd.mp4?tag=progressive_h264-basic-gen2_360p","failure_reason":null,"metadata":{"quality":"SD"}},{"progressive_url":"https:\/\/video.fbcdn.test\/n\/hd.mp4?tag=progressive_h264-basic-gen2_720p","failure_reason":null,"metadata":{"quality":"HD"}}],"hls_playlist_urls":[{"url":"x","metadata":{"id":"999"}}],"id":"1000000000000001"}}},"next":{"progressive_urls":[{"progressive_url":"https:\/\/video.fbcdn.test\/n\/sd2.mp4?tag=sve_sd","failure_reason":null,"metadata":{"quality":"SD"}}],"id":"1000000000000003"}}`;
+
+// Instagram (verified 2026-09-28): media objects carry "code" (the URL shortcode) before video_versions;
+// carousel children have video_versions but no code of their own.
+const IG = JSON.stringify({
+  require: [['ScheduledServerJS', { items: [
+    { code: 'AbCdEfGhIjK', pk: '1', media_type: 2, has_audio: true, video_versions: [
+      { type: 101, width: 720, height: 1280, url: 'https://instagram.fbkk.test/v/t16/a.mp4?efg=1' },
+      { type: 102, width: 480, height: 854, url: 'https://instagram.fbkk.test/v/t16/b.mp4' },
+    ] },
+    { code: 'CAROUSEL1', carousel_media: [
+      { pk: '2', video_versions: [{ width: 1080, height: 1920, url: 'https://instagram.fbkk.test/c1.mp4' }] },
+      { pk: '3', video_versions: [{ width: 540, height: 960, url: 'https://instagram.fbkk.test/c2.mp4' }] },
+      { pk: '4', image_versions2: { candidates: [] } },
+    ] },
+  ] }]],
 });
 
-// Newer shape Facebook sends when logged in (verified 2026-09-28): progressive_urls with quality labels,
-// the video id as a later sibling key; nested objects may carry their own "id".
-const FB_NEW = String.raw`{"data":{"videoDeliveryResponseFragment":{"videoDeliveryResponseResult":{"dash_manifests":[{"manifest_xml":"<MPD>[x]{y}</MPD>"}],"dash_manifest_urls":[],"progressive_urls":[{"progressive_url":"https:\/\/video.fbcdn.test\/n\/sd.mp4?tag=progressive_h264-basic-gen2_360p","failure_reason":null,"metadata":{"quality":"SD"}},{"progressive_url":"https:\/\/video.fbcdn.test\/n\/hd.mp4?tag=progressive_h264-basic-gen2_720p","failure_reason":null,"metadata":{"quality":"HD"}}],"hls_playlist_urls":[{"url":"x","metadata":{"id":"999"}}],"id":"1000000000000001"}}},"next":{"progressive_urls":[{"progressive_url":"https:\/\/video.fbcdn.test\/n\/sd2.mp4?tag=sve_sd","failure_reason":null,"metadata":{"quality":"SD"}}],"id":"1000000000000003"},"broken":{"progressive_urls":[{"progressive_url":"https:\/\/x`;
+test('pageVideos reads older Facebook data, unescapes it, one entry per id', () => {
+  assert.deepEqual(pageVideos([FB]), [
+    { site: 'facebook', id: '1000000000000001', sd: SD1, hd: HD1 },
+    { site: 'facebook', id: '1000000000000002', sd: 'https://video.fbcdn.test/sd2.mp4', hd: null },
+    { site: 'facebook', id: '777', sd: 'javascript:alert(1)', hd: null },
+  ]);
+  assert.deepEqual(pageVideos(['{"nothing":"here"}']), []);
+});
 
-test('pageVideos also reads the newer progressive_urls shape (logged-in Facebook)', () => {
-  assert.deepEqual(pageVideos(FB_NEW), [
+test('pageVideos reads the newer Facebook progressive_urls shape; nested ids are not the video id', () => {
+  assert.deepEqual(pageVideos([FB_NEW]), [
     {
+      site: 'facebook',
       id: '1000000000000001',
       sd: 'https://video.fbcdn.test/n/sd.mp4?tag=progressive_h264-basic-gen2_360p',
       hd: 'https://video.fbcdn.test/n/hd.mp4?tag=progressive_h264-basic-gen2_720p',
     },
-    { id: '1000000000000003', sd: 'https://video.fbcdn.test/n/sd2.mp4?tag=sve_sd', hd: null },
+    { site: 'facebook', id: '1000000000000003', sd: 'https://video.fbcdn.test/n/sd2.mp4?tag=sve_sd', hd: null },
   ]);
 });
 
-test('pageVideos merges both shapes for the same video into one entry', () => {
-  const both = pageVideos(FB + FB_NEW);
+test('pageVideos merges both Facebook shapes per id and skips blocks that are not valid JSON', () => {
+  const both = pageVideos(['{"progressive_urls":[{"progressive_url":"https:\\/\\/x', FB, FB_NEW]);
   assert.equal(both.filter(v => v.id === '1000000000000001').length, 1);
-  assert.deepEqual(both.find(v => v.id === '1000000000000001'), { id: '1000000000000001', sd: SD1, hd: HD1 });
-  assert.deepEqual(both.find(v => v.id === '1000000000000003').sd, 'https://video.fbcdn.test/n/sd2.mp4?tag=sve_sd');
+  assert.deepEqual(both.find(v => v.id === '1000000000000001'), { site: 'facebook', id: '1000000000000001', sd: SD1, hd: HD1 });
+  assert.equal(both.find(v => v.id === '1000000000000003').sd, 'https://video.fbcdn.test/n/sd2.mp4?tag=sve_sd');
 });
 
-test('videoIdFromUrl finds Facebook reel/video ids only', () => {
+test('pageVideos reads Instagram video_versions: largest version, one entry per video, carousel children under the post code', () => {
+  assert.deepEqual(pageVideos([IG]), [
+    { site: 'instagram', id: 'AbCdEfGhIjK', sd: null, hd: 'https://instagram.fbkk.test/v/t16/a.mp4?efg=1' },
+    { site: 'instagram', id: 'CAROUSEL1', sd: null, hd: 'https://instagram.fbkk.test/c1.mp4' },
+    { site: 'instagram', id: 'CAROUSEL1', sd: 'https://instagram.fbkk.test/c2.mp4', hd: null },
+  ]);
+});
+
+test('videoIdFromUrl finds Facebook video ids and Instagram post codes only', () => {
   assert.equal(videoIdFromUrl('https://www.facebook.com/reel/1000000000000001'), '1000000000000001');
   assert.equal(videoIdFromUrl('https://www.facebook.com/reel/1000000000000001/?s=ifu'), '1000000000000001');
   assert.equal(videoIdFromUrl('https://www.facebook.com/watch/?v=123456'), '123456');
   assert.equal(videoIdFromUrl('https://www.facebook.com/SomePage/videos/987654321/'), '987654321');
-  assert.equal(videoIdFromUrl('https://www.youtube.com/watch?v=kJiHgFeDcBa'), null);
-  assert.equal(videoIdFromUrl('https://www.facebook.com/'), null);
   assert.equal(videoIdFromUrl('https://m.facebook.com/reel/42'), '42');
+  assert.equal(videoIdFromUrl('https://www.facebook.com/'), null);
+  assert.equal(videoIdFromUrl('https://www.instagram.com/p/AbCdEfGhIjK/'), 'AbCdEfGhIjK');
+  assert.equal(videoIdFromUrl('https://www.instagram.com/reel/AbCdEfGhIjK/?igsh=abc'), 'AbCdEfGhIjK');
+  assert.equal(videoIdFromUrl('https://www.instagram.com/reels/C_x-9/'), 'C_x-9');
+  assert.equal(videoIdFromUrl('https://www.instagram.com/tv/B1/'), 'B1');
+  assert.equal(videoIdFromUrl('https://www.instagram.com/'), null);
+  assert.equal(videoIdFromUrl('https://www.instagram.com/stories/someone/123/'), null);
+  assert.equal(videoIdFromUrl('https://www.youtube.com/watch?v=kJiHgFeDcBa'), null);
   assert.equal(videoIdFromUrl('https://example.com/reel/1000000000000001'), null);
   assert.equal(videoIdFromUrl(undefined), null);
 });
 
-test('pageVideoItems: only the reel in the URL (never the preloaded next ones), HD first, named by id; http(s) only', () => {
-  assert.deepEqual(pageVideoItems(FB, 'https://www.facebook.com/reel/1000000000000001'), [
+test('pageVideoItems: only the video in the URL (never preloaded next ones), HD first, named by site and id; http(s) only', () => {
+  assert.deepEqual(pageVideoItems([FB], 'https://www.facebook.com/reel/1000000000000001'), [
     { url: HD1, kind: 'video', size: null, label: 'HD · with sound', filename: 'facebook-1000000000000001-hd.mp4' },
     { url: SD1, kind: 'video', size: null, label: 'SD · with sound', filename: 'facebook-1000000000000001-sd.mp4' },
   ]);
-  assert.deepEqual(pageVideoItems(FB, 'https://www.facebook.com/').map(i => i.filename), [
+  assert.deepEqual(pageVideoItems([FB], 'https://www.facebook.com/').map(i => i.filename), [
     'facebook-1000000000000001-hd.mp4',
     'facebook-1000000000000001-sd.mp4',
     'facebook-1000000000000002-sd.mp4',
   ]);
-  assert.deepEqual(pageVideoItems(FB, 'https://www.facebook.com/reel/999'), []);
+  assert.deepEqual(pageVideoItems([FB], 'https://www.facebook.com/reel/999'), []);
+  assert.deepEqual(pageVideoItems([IG], 'https://www.instagram.com/p/CAROUSEL1/').map(i => [i.label, i.filename]), [
+    ['HD · with sound', 'instagram-CAROUSEL1-hd.mp4'],
+    ['SD · with sound', 'instagram-CAROUSEL1-sd.mp4'],
+  ]);
 });
 
-test('hideFacebookPieces drops fbcdn video/audio pieces on Facebook pages only', () => {
+test('hideSitePieces drops fbcdn/cdninstagram video/audio pieces on Facebook and Instagram pages only', () => {
   const items = [
     { url: 'https://video.fbkk22-4.fna.fbcdn.net/o1/v/t2/f2/m69/AQM.mp4?efg=x', kind: 'video' },
     { url: 'https://video.fbkk22-4.fna.fbcdn.net/o1/v/t2/f2/m69/AQN.mp4?efg=y', kind: 'audio' },
+    { url: 'https://scontent-bkk1-1.cdninstagram.com/o1/v/AQO.mp4', kind: 'video' },
     { url: 'https://scontent.fbkk22-4.fna.fbcdn.net/v/photo.jpg', kind: 'image' },
     { url: 'https://cdn.example/clip.mp4', kind: 'video' },
   ];
-  assert.deepEqual(hideFacebookPieces(items, 'https://www.facebook.com/reel/1').map(i => i.url), [
-    'https://scontent.fbkk22-4.fna.fbcdn.net/v/photo.jpg',
-    'https://cdn.example/clip.mp4',
-  ]);
-  assert.equal(hideFacebookPieces(items, 'https://example.com/').length, 4);
-  assert.equal(hideFacebookPieces(items, undefined).length, 4);
+  const kept = ['https://scontent.fbkk22-4.fna.fbcdn.net/v/photo.jpg', 'https://cdn.example/clip.mp4'];
+  assert.deepEqual(hideSitePieces(items, 'https://www.facebook.com/reel/1').map(i => i.url), kept);
+  assert.deepEqual(hideSitePieces(items, 'https://www.instagram.com/p/AbCdEfGhIjK/').map(i => i.url), kept);
+  assert.equal(hideSitePieces(items, 'https://example.com/').length, 5);
+  assert.equal(hideSitePieces(items, undefined).length, 5);
 });

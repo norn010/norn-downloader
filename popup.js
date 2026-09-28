@@ -1,4 +1,4 @@
-import { hideFacebookPieces, mergeItems, safeName, videoIdFromUrl } from './media.js';
+import { hideSitePieces, mergeItems, safeName, videoIdFromUrl } from './media.js';
 
 const $ = sel => document.querySelector(sel);
 
@@ -41,9 +41,9 @@ try {
   // chrome:// pages, the Web Store, PDFs: network list only
 }
 
-const fbVideoPage = videoIdFromUrl(tab.url) !== null;
-let fbLoading = fbVideoPage; // background fetches the with-sound files; see the fbItems request below
-const items = hideFacebookPieces(mergeItems(net, scan), tab.url);
+const siteVideoPage = videoIdFromUrl(tab.url) !== null;
+let loadingSite = siteVideoPage; // background fetches the with-sound files; see the videoItems request below
+const items = hideSitePieces(mergeItems(net, scan), tab.url);
 const selected = new Set();
 let filter = 'all';
 
@@ -102,8 +102,8 @@ function render() {
     className: 'empty',
     textContent: 'Nothing found yet. Play or scroll the page, then reopen.',
   });
-  $('#grid').replaceChildren(...(list.length ? list.map(card) : fbLoading ? [] : [empty]));
-  $('#fbLoading').hidden = !fbLoading;
+  $('#grid').replaceChildren(...(list.length ? list.map(card) : loadingSite ? [] : [empty]));
+  $('#siteLoading').hidden = !loadingSite;
   sync();
 }
 
@@ -169,13 +169,13 @@ $('#dismiss').onclick = () => {
 };
 
 if (lastError) showError(lastError);
-$('#hint').hidden = !scan.blobVideo || fbVideoPage;
+$('#hint').hidden = !scan.blobVideo || siteVideoPage;
 render();
 
-// Facebook with-sound MP4s (HD/SD) go on top; background may open a hidden tab to get them (a few seconds).
-const fb = await chrome.runtime.sendMessage({ type: 'fbItems', tabId: tab.id, url: tab.url }).catch(e => ({ error: e.message }));
-fbLoading = false;
+// Facebook/Instagram with-sound MP4s go on top; background may open a hidden tab to get them (a few seconds).
+const site = await chrome.runtime.sendMessage({ type: 'videoItems', tabId: tab.id, url: tab.url }).catch(e => ({ error: e.message }));
+loadingSite = false;
 const known = new Set(items.map(i => i.url));
-items.unshift(...(fb?.items ?? []).filter(i => !known.has(i.url)));
-if (fbVideoPage && !fb?.items?.length) showError(fb?.error ?? "Couldn't find this video's file with sound. Try Record tab.");
+items.unshift(...(site?.items ?? []).filter(i => !known.has(i.url)));
+if (siteVideoPage && !site?.items?.length) showError(site?.error ?? "Couldn't find this video's file with sound. Try Record tab.");
 render();

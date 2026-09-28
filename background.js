@@ -104,21 +104,20 @@ const handlers = {
   },
 };
 
-// ---- Facebook videos with sound ----
+// ---- Facebook / Instagram videos with sound ----
 
-// Runs inside the page: Facebook's embedded data, which holds ready-made MP4s with sound (see pageVideoItems).
-function facebookData() {
+// Runs inside the page: the JSON blocks that hold ready-made MP4s with sound (parsed by pageVideoItems).
+function pageData() {
   return [...document.querySelectorAll('script[type="application/json"]')]
     .map(s => s.textContent)
-    .filter(t => t.includes('browser_native') || t.includes('"progressive_urls"'))
-    .join('\n');
+    .filter(t => /browser_native|"progressive_urls"|"video_versions"/.test(t));
 }
 
 const inject = async (tabId, func) => (await chrome.scripting.executeScript({ target: { tabId }, func }))[0].result;
 
-// Facebook only embeds a reel's data when its URL is loaded directly, not when reached by clicking or
-// scrolling inside Facebook. Load the URL in a muted background tab, read the data, close the tab.
-async function facebookDataViaTab(url) {
+// Facebook and Instagram only embed a video's data when its URL is loaded directly, not when it is reached by
+// clicking or scrolling inside the site. Load the URL in a muted background tab, read the data, close the tab.
+async function pageDataViaTab(url) {
   const bg = await chrome.tabs.create({ url, active: false });
   try {
     await chrome.tabs.update(bg.id, { muted: true });
@@ -131,35 +130,35 @@ async function facebookDataViaTab(url) {
       const onUpdated = (id, info) => id === bg.id && info.status === 'complete' && done();
       const timer = setTimeout(() => {
         chrome.tabs.onUpdated.removeListener(onUpdated);
-        reject(new Error('Facebook took too long to load'));
+        reject(new Error('The page took too long to load'));
       }, 20_000);
       chrome.tabs.onUpdated.addListener(onUpdated);
       chrome.tabs.get(bg.id).then(t => t.status === 'complete' && done());
     });
-    return await inject(bg.id, facebookData);
+    return await inject(bg.id, pageData);
   } finally {
     chrome.tabs.remove(bg.id).catch(() => {});
   }
 }
 
-// With-sound items for the Facebook video in `url`: from the open tab when its page carries them, else via a
-// background tab. Cached per video id for the session, so reopening the popup is instant.
-async function facebookItems(tabId, url) {
+// With-sound items for the video in `url`: from the open tab when its page carries them, else via a background
+// tab. Cached per video id for the session, so reopening the popup is instant.
+async function siteVideoItems(tabId, url) {
   const id = videoIdFromUrl(url);
-  const cacheKey = `fb:${id}`;
+  const cacheKey = `video:${id}`;
   if (id) {
     const { [cacheKey]: cached } = await store.get(cacheKey);
     if (cached) return cached;
   }
-  let items = pageVideoItems((await inject(tabId, facebookData).catch(() => '')) ?? '', url);
-  if (!items.length && id) items = pageVideoItems(await facebookDataViaTab(url), url);
+  let items = pageVideoItems((await inject(tabId, pageData).catch(() => [])) ?? [], url);
+  if (!items.length && id) items = pageVideoItems((await pageDataViaTab(url)) ?? [], url);
   if (id && items.length) await store.set({ [cacheKey]: items });
   return items;
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
-  if (msg.type === 'fbItems') {
-    facebookItems(msg.tabId, msg.url).then(items => reply({ items }), e => reply({ items: [], error: e.message }));
+  if (msg.type === 'videoItems') {
+    siteVideoItems(msg.tabId, msg.url).then(items => reply({ items }), e => reply({ items: [], error: e.message }));
     return true; // answered later; the work finishes even if the popup closes
   }
   reply(); // ack so the sender's promise resolves; results travel as separate messages
