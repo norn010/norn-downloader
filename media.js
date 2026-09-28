@@ -40,3 +40,57 @@ export function addItem(items, item) {
   if (items.some(i => i.url === item.url)) return items;
   return [...items, item].slice(-MAX_ITEMS);
 }
+
+// Tab title → filename Windows and Chrome accept. Counts code points so emoji aren't cut in half.
+export function safeName(title) {
+  const name = Array.from(String(title ?? '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_'))
+    .slice(0, 100)
+    .join('')
+    .replace(/^[. ]+|[. ]+$/g, '');
+  return name || 'norn';
+}
+
+// Largest candidate by its w/x descriptor, parsed the way browsers do: a URL is a run of
+// non-spaces (commas allowed inside); its descriptors run to the next comma.
+export function srcsetBest(srcset) {
+  let best = null;
+  let bestSize = -1;
+  let rest = srcset;
+  while ((rest = rest.replace(/^[\s,]+/, ''))) {
+    let url = rest.match(/^\S+/)[0];
+    let desc = '';
+    rest = rest.slice(url.length);
+    if (url.endsWith(',')) url = url.replace(/,+$/, '');
+    else {
+      desc = rest.match(/^[^,]*/)[0];
+      rest = rest.slice(desc.length);
+    }
+    const size = parseFloat(desc.match(/[\d.]+(?=[wx])/)?.[0] ?? '1');
+    if (size > bestSize) {
+      best = url;
+      bestSize = size;
+    }
+  }
+  return best;
+}
+
+// Popup list: network finds newest first (they carry sizes), then page finds, then the largest
+// srcset candidate of each element. Only http(s), one entry per cleaned URL.
+export function mergeItems(net, scan) {
+  const out = new Map();
+  const put = (url, kind, size = null) => {
+    try {
+      url = cleanUrl(new URL(url, scan.base).href);
+    } catch {
+      return;
+    }
+    if (kind && /^https?:/.test(url) && !out.has(url)) out.set(url, { url, kind, size });
+  };
+  for (const i of [...net].reverse()) put(i.url, i.kind, i.size);
+  for (const i of scan.found) put(i.url, classify(i.url) ?? i.kind);
+  for (const s of scan.srcsets) {
+    const best = srcsetBest(s);
+    if (best) put(best, 'image');
+  }
+  return [...out.values()];
+}

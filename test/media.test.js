@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classify, cleanUrl, addItem, MAX_ITEMS } from '../media.js';
+import { classify, cleanUrl, addItem, MAX_ITEMS, safeName, srcsetBest, mergeItems } from '../media.js';
 
 test('classify uses Content-Type first', () => {
   assert.equal(classify('https://a.test/x', 'image/webp'), 'image');
@@ -50,4 +50,53 @@ test('addItem keeps only the newest MAX_ITEMS', () => {
   assert.equal(items.length, MAX_ITEMS);
   assert.equal(items[0].url, 'https://a.test/5.jpg');
   assert.equal(items.at(-1).url, `https://a.test/${MAX_ITEMS + 4}.jpg`);
+});
+
+test('safeName makes tab titles safe for Windows filenames', () => {
+  assert.equal(safeName('Reel: cats / dogs? "live" <1> | 2*'), 'Reel_ cats _ dogs_ _live_ _1_ _ 2_');
+  assert.equal(safeName('C:\\temp\\clip'), 'C__temp_clip');
+  assert.equal(safeName('  ..hidden..  '), 'hidden');
+  assert.equal(safeName('วิดีโอ 🎬'), 'วิดีโอ 🎬');
+  assert.equal(safeName(''), 'norn');
+  assert.equal(safeName(undefined), 'norn');
+  assert.equal(safeName('x'.repeat(300)).length, 100);
+});
+
+test('srcsetBest picks the largest candidate, URLs may contain commas', () => {
+  assert.equal(srcsetBest('a.jpg 320w, b.jpg 1080w, c.jpg 640w'), 'b.jpg');
+  assert.equal(srcsetBest('a.jpg 1x,b.jpg 2x'), 'b.jpg');
+  assert.equal(
+    srcsetBest('https://img.test/w_200,h_200/a.jpg 1x, https://img.test/w_400,h_400/a.jpg 2x'),
+    'https://img.test/w_400,h_400/a.jpg',
+  );
+  assert.equal(srcsetBest('only.jpg'), 'only.jpg');
+  assert.equal(srcsetBest('  '), null);
+});
+
+test('mergeItems: network newest first, then page finds; http(s) only; deduped after cleanUrl', () => {
+  const net = [
+    { url: 'https://a.test/old.jpg', kind: 'image', mime: 'image/jpeg', size: 5000 },
+    { url: 'https://v.test/r.mp4?oh=1', kind: 'video', mime: 'video/mp4', size: 9000 },
+  ];
+  const scan = {
+    base: 'https://a.test/page/',
+    found: [
+      { url: 'https://a.test/old.jpg', kind: 'image' },
+      { url: 'https://v.test/r.mp4?oh=1&bytestart=0&byteend=9', kind: 'video' },
+      { url: 'blob:https://a.test/123', kind: 'video' },
+      { url: 'data:image/png;base64,AAAA', kind: 'image' },
+      { url: 'javascript:alert(1)', kind: 'image' },
+      { url: 'http://[bad', kind: 'image' },
+      { url: 'https://a.test/stream/index.m3u8', kind: 'video' },
+      { url: 'https://a.test/photo?id=7', kind: 'image' },
+    ],
+    srcsets: ['small.jpg 320w, big.jpg 1080w', '   '],
+  };
+  assert.deepEqual(mergeItems(net, scan), [
+    { url: 'https://v.test/r.mp4?oh=1', kind: 'video', size: 9000 },
+    { url: 'https://a.test/old.jpg', kind: 'image', size: 5000 },
+    { url: 'https://a.test/stream/index.m3u8', kind: 'hls', size: null },
+    { url: 'https://a.test/photo?id=7', kind: 'image', size: null },
+    { url: 'https://a.test/page/big.jpg', kind: 'image', size: null },
+  ]);
 });

@@ -7,5 +7,5 @@
   "permissions": ["webRequest", "downloads", "scripting", "activeTab", "offscreen", "tabCapture", "storage"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js", "type": "module" },
-  "action": { "default_title": "Norn Downloader" }
+  "action": { "default_title": "Norn Downloader", "default_popup": "popup.html" }
 }

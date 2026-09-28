@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Norn Downloader</title>
+<style>
+  :root { color-scheme: light dark; --bg: #fff; --fg: #1a1a1a; --muted: #6b6b6b; --line: #e3e3e3; --accent: #3b5bdb; --danger: #c92a2a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1e1e1e; --fg: #eee; --muted: #9a9a9a; --line: #333; --accent: #748ffc; --danger: #ff6b6b; }
+  }
+  [hidden] { display: none !important; }
+  body { margin: 0; width: 380px; font: 13px system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+  .bar { display: flex; gap: 6px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  .spacer { flex: 1; }
+  button { font: inherit; padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px; background: none; color: inherit; cursor: pointer; }
+  button[aria-pressed="true"], button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .note { margin: 8px 10px 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+  .note.error { display: flex; gap: 6px; align-items: start; border-color: var(--danger); color: var(--danger); white-space: pre-line; }
+  #grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 10px; max-height: 420px; overflow-y: auto; }
+  .card { position: relative; display: flex; flex-direction: column; gap: 2px; cursor: pointer; min-width: 0; }
+  .card input { position: absolute; top: 4px; left: 4px; margin: 0; }
+  .thumb { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; background: var(--line); display: grid; place-items: center; font-weight: 600; color: var(--muted); }
+  .card:has(input:checked) .thumb { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .card small { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .empty { grid-column: 1 / -1; margin: 0; padding: 24px 0; text-align: center; color: var(--muted); }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <button data-filter="all" data-label="All" aria-pressed="true">All</button>
+    <button data-filter="image" data-label="Images">Images</button>
+    <button data-filter="video" data-label="Videos">Videos</button>
+    <button data-filter="hls" data-label="Streams">Streams</button>
+  </div>
+  <div class="bar">
+    <label><input type="checkbox" id="all"> Select all</label>
+    <span class="spacer"></span>
+    <button id="download" class="primary" disabled>Download</button>
+  </div>
+  <div class="bar">
+    <button id="record">Record tab</button>
+    <button id="stopLive" hidden>Stop live</button>
+  </div>
+  <div id="error" class="note error" hidden>
+    <span id="errorText" class="spacer"></span>
+    <button id="dismiss" aria-label="Dismiss">×</button>
+  </div>
+  <div id="hint" class="note" hidden>This page plays video through a stream player (blob:). If it isn't listed, use Record tab.</div>
+  <div id="grid"></div>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
