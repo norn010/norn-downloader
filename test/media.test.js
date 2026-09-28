@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  classify, cleanUrl, addItem, MAX_ITEMS, safeName, srcsetBest, mergeItems, pageVideos, videoIdFromUrl, pageVideoItems, hideSitePieces, markCurrent,
+  classify, cleanUrl, addItem, MAX_ITEMS, safeName, srcsetBest, mergeItems, pageVideos, videoIdFromUrl, pageVideoItems, hideSitePieces, markCurrent, syndicationUrl,
 } from '../media.js';
 
 test('classify uses Content-Type first', () => {
@@ -297,6 +297,69 @@ test('pageVideoItems lists a video once even when the page repeats it', () => {
   assert.equal(pageVideoItems([TT, TT], `https://www.tiktok.com/@somecreator/video/${TT_ID}`).length, 2);
 });
 
+// X (verified 2026-09-28): cdn.syndication.twimg.com/tweet-result JSON. Tweets are {"__typename":"Tweet","id_str"},
+// videos sit in mediaDetails[] with video_info.variants (MP4s with sound + an HLS playlist); quoted tweets nest.
+const X_ID = '2000000000000000001';
+const mp4 = (bitrate, size, name) => ({ bitrate, content_type: 'video/mp4', url: `https://video.twimg.com/ext_tw_video/1/pu/vid/avc1/${size}/${name}.mp4?tag=12` });
+const X_TWEET = JSON.stringify({
+  __typename: 'Tweet', id_str: X_ID,
+  mediaDetails: [{
+    type: 'video', media_url_https: 'https://pbs.twimg.com/ext_tw_video_thumb/1/pu/img/t.jpg', original_info: { width: 2160, height: 2810 },
+    video_info: { variants: [
+      { content_type: 'application/x-mpegURL', url: 'https://video.twimg.com/ext_tw_video/1/pu/pl/x.m3u8' },
+      mp4(632000, '320x416', 'a'), mp4(950000, '480x624', 'b'), mp4(2176000, '720x936', 'c'),
+      mp4(10368000, '1080x1404', 'd'), mp4(25128000, '2160x2810', 'e'),
+    ] },
+  }],
+  quoted_tweet: { __typename: 'Tweet', id_str: '999', mediaDetails: [{ type: 'video', video_info: { variants: [mp4(832000, '640x360', 'q')] } }] },
+});
+const X_MULTI = JSON.stringify({ __typename: 'Tweet', id_str: '555', mediaDetails: [
+  { type: 'video', video_info: { variants: [mp4(2176000, '1280x720', 'v1')] } },
+  { type: 'animated_gif', video_info: { variants: [{ bitrate: 0, content_type: 'video/mp4', url: 'https://video.twimg.com/tweet_video/g.mp4' }] } },
+  { type: 'video', video_info: { variants: [mp4(832000, '640x360', 'v2')] } },
+] });
+
+test('pageVideos reads X tweets: highest bitrate as HD, largest below 720p as SD, quoted tweets under their own id', () => {
+  assert.deepEqual(pageVideos([X_TWEET]), [
+    {
+      site: 'x', id: X_ID,
+      hd: 'https://video.twimg.com/ext_tw_video/1/pu/vid/avc1/2160x2810/e.mp4?tag=12',
+      sd: 'https://video.twimg.com/ext_tw_video/1/pu/vid/avc1/480x624/b.mp4?tag=12',
+      thumb: 'https://pbs.twimg.com/ext_tw_video_thumb/1/pu/img/t.jpg',
+      hls: 'https://video.twimg.com/ext_tw_video/1/pu/pl/x.m3u8',
+    },
+    { site: 'x', id: '999', hd: null, sd: 'https://video.twimg.com/ext_tw_video/1/pu/vid/avc1/640x360/q.mp4?tag=12' },
+  ]);
+});
+
+test('pageVideoItems: X tweet with several videos numbers them; GIFs say they have no sound', () => {
+  assert.deepEqual(pageVideoItems([X_MULTI], 'https://x.com/someone/status/555').map(i => [i.label, i.filename]), [
+    ['#1 · HD · with sound', 'x-555-1-hd.mp4'],
+    ['#2 · GIF (no sound)', 'x-555-2-gif.mp4'],
+    ['#3 · SD · with sound', 'x-555-3-sd.mp4'],
+  ]);
+  assert.deepEqual(pageVideoItems([X_TWEET], `https://x.com/someuser/status/${X_ID}`).map(i => [i.label, i.filename]), [
+    ['HD · with sound', `x-${X_ID}-hd.mp4`],
+    ['SD · with sound', `x-${X_ID}-sd.mp4`],
+  ]);
+});
+
+test('pageVideoItems says so when the original X video has no sound (its HLS master has no audio rendition)', () => {
+  const silent = new Set(['https://video.twimg.com/ext_tw_video/1/pu/pl/x.m3u8']);
+  assert.deepEqual(pageVideoItems([X_TWEET], `https://x.com/someuser/status/${X_ID}`, silent).map(i => i.label), [
+    'HD · original has no sound',
+    'SD · original has no sound',
+  ]);
+  assert.ok(pageVideoItems([X_TWEET], `https://x.com/someuser/status/${X_ID}`).every(i => !('hls' in i)));
+});
+
+test('syndicationUrl builds the tweet-result request (token as X computes it) for X tweets only', () => {
+  assert.equal(syndicationUrl(`https://x.com/someuser/status/${X_ID}`),
+    `https://cdn.syndication.twimg.com/tweet-result?id=${X_ID}&token=4uj6o5owj98&lang=en`);
+  assert.equal(syndicationUrl('https://x.com/home'), null);
+  assert.equal(syndicationUrl('https://www.facebook.com/reel/1000000000000001'), null);
+});
+
 test('videoIdFromUrl finds Facebook video ids and Instagram post codes only', () => {
   assert.equal(videoIdFromUrl('https://www.facebook.com/reel/1000000000000001'), '1000000000000001');
   assert.equal(videoIdFromUrl('https://www.facebook.com/reel/1000000000000001/?s=ifu'), '1000000000000001');
@@ -315,6 +378,11 @@ test('videoIdFromUrl finds Facebook video ids and Instagram post codes only', ()
   assert.equal(videoIdFromUrl(`https://www.tiktok.com/@somecreator/video/${TT_ID}?is_from_webapp=1`), TT_ID);
   assert.equal(videoIdFromUrl('https://www.tiktok.com/@somecreator/photo/7661611868921859999'), null);
   assert.equal(videoIdFromUrl('https://www.tiktok.com/foryou'), null);
+  assert.equal(videoIdFromUrl(`https://x.com/someuser/status/${X_ID}`), X_ID);
+  assert.equal(videoIdFromUrl('https://twitter.com/i/status/123'), '123');
+  assert.equal(videoIdFromUrl('https://x.com/a/status/123/video/1'), '123');
+  assert.equal(videoIdFromUrl('https://mobile.twitter.com/a/status/456'), '456');
+  assert.equal(videoIdFromUrl('https://x.com/home'), null);
   assert.equal(videoIdFromUrl('https://www.youtube.com/watch?v=kJiHgFeDcBa'), null);
   assert.equal(videoIdFromUrl('https://example.com/reel/1000000000000001'), null);
   assert.equal(videoIdFromUrl(undefined), null);
@@ -350,6 +418,16 @@ test('hideSitePieces drops fbcdn/cdninstagram video/audio pieces on Facebook and
   assert.deepEqual(hideSitePieces(items, 'https://www.instagram.com/p/AbCdEfGhIjK/').map(i => i.url), kept);
   assert.equal(hideSitePieces(items, 'https://example.com/').length, 5);
   assert.equal(hideSitePieces(items, undefined).length, 5);
+});
+
+test('hideSitePieces drops X\'s HLS playlist and pieces (audio is separate) on X pages, keeps images', () => {
+  const items = [
+    { url: 'https://video.twimg.com/ext_tw_video/1/pu/pl/x.m3u8', kind: 'hls' },
+    { url: 'https://video.twimg.com/ext_tw_video/1/pu/vid/avc1/0/3000/720x936/s.m4s', kind: 'video' },
+    { url: 'https://pbs.twimg.com/media/photo.jpg', kind: 'image' },
+  ];
+  assert.deepEqual(hideSitePieces(items, `https://x.com/someuser/status/${X_ID}`).map(i => i.url), ['https://pbs.twimg.com/media/photo.jpg']);
+  assert.equal(hideSitePieces(items, 'https://example.com/').length, 3);
 });
 
 test('hideSitePieces drops the TikTok player\'s chunked video files on TikTok pages, keeps images', () => {

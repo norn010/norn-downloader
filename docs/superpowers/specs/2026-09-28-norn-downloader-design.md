@@ -70,7 +70,7 @@ one-shot scan function with `chrome.scripting.executeScript`.
 4. UI: filter buttons with counts (All / Images / Videos incl. audio / Streams), grid of cards (image thumbnail or type label, filename, size, checkbox), Select all (visible items), Download N, Record tab ⇄ Stop recording, Stop live (when `status.live`), `lastError` banner (dismiss → background clears it), hint when a `<video>` plays a `blob:` URL.
 5. Page-derived strings only go into the DOM via `textContent`/properties, never `innerHTML`.
 
-## Flow 2b — Facebook / Instagram / TikTok videos with sound (added after first release)
+## Flow 2b — Facebook / Instagram / TikTok / X videos with sound (added after first release)
 
 Facebook and Instagram play video as DASH (video-only pieces + separate audio), so sniffed pieces have no sound.
 The loaded page's `<script type="application/json">` blocks (each one JSON document) carry ready-made progressive MP4s
@@ -98,6 +98,12 @@ TikTok (`/@<name>/video/<id>`, verified 2026-09-28): `__UNIVERSAL_DATA_FOR_REHYD
 
 9. `pageVideos` reads objects with `id` + `video.bitrateInfo`: the largest version is HD (labelled `(H.265)` unless H.264), the largest smaller H.264 version is SD (plays everywhere); `video.cover` is the thumbnail. On tiktok.com, `hideSitePieces` also drops tiktok.com/tiktokcdn video responses.
 10. TikTok's CDN answers 403 without a tiktok.com Referer. Background installs a `declarativeNetRequest` session rule setting `Referer: https://www.tiktok.com/` on requests to tiktok.com / tiktokcdn*.com with `tabId -1` (the extension's own requests only). `chrome.downloads` bypasses such rules, so TikTok items carry `fetch: true` and the popup sends `file {url, filename}`: offscreen fetches the file and saves it through the blob path used for HLS.
+
+X (`x.com|twitter.com/<name>/status/<id>`, verified 2026-09-28): pages don't embed video data. `syndicationUrl` builds `cdn.syndication.twimg.com/tweet-result?id=<id>&token=<t>` (token = `((id / 1e15) * π).toString(36)` without zeros and dots, as X's embed script does), which returns `{"__typename":"Tweet","id_str","mediaDetails":[{"type":"video"|"animated_gif","video_info":{"variants":[…]}}]}` without login. MP4 variants carry sound when the original has it and download without special headers.
+
+11. Background fetches that JSON (no page read, no background tab); `pageVideos` gives per video HD = highest bitrate, SD = largest below 720p, GIF = its single MP4 (`GIF (no sound)`), numbered `#n` when a tweet has several, quoted tweets under their own id. Names `x-<id>[-n]-hd|sd|gif.mp4`.
+12. Background also reads each video's HLS master; without `TYPE=AUDIO` the original is silent and the cards say `original has no sound` instead of `with sound`.
+13. On x.com, `hideSitePieces` drops video.twimg.com HLS playlists and pieces (audio is a separate rendition there). Protected or deleted posts → error suggesting Record tab.
 
 8. Instagram cards use the item's smallest `image_versions2` candidate as the thumbnail instead of loading the video.
 

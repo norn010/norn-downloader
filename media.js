@@ -159,13 +159,39 @@ export function pageVideos(texts) {
       ...(typeof node.video.cover === 'string' && { thumb: node.video.cover }),
     });
   };
+  // X (tweet-result JSON): mediaDetails[] {type: video|animated_gif, video_info.variants: MP4s with sound + HLS}.
+  // HD = highest bitrate, SD = largest below 720p; a tweet's videos are numbered when there is more than one.
+  const xCount = new Map();
+  const x = (node, tweet) => {
+    const mp4s = node.video_info.variants.filter(v => v?.content_type === 'video/mp4' && typeof v.url === 'string');
+    if (!mp4s.length) return;
+    xCount.set(tweet, (xCount.get(tweet) ?? 0) + 1);
+    const entry = { site: 'x', id: tweet, num: xCount.get(tweet) };
+    if (node.type === 'animated_gif') entry.gif = mp4s[0].url;
+    else {
+      const short = v => { const m = v.url.match(/\/(\d+)x(\d+)\//); return m ? Math.min(m[1], m[2]) : 0; };
+      const byRate = [...mp4s].sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0));
+      const best = byRate[0];
+      const bestShort = short(best) || Math.min(node.original_info?.width ?? 0, node.original_info?.height ?? 0);
+      const isHd = bestShort >= 720;
+      entry.hd = isHd ? best.url : null;
+      entry.sd = isHd ? (byRate.find(v => short(v) > 0 && short(v) < 720)?.url ?? null) : best.url;
+    }
+    if (typeof node.media_url_https === 'string') entry.thumb = node.media_url_https;
+    // the HLS master tells whether the original has sound at all (see pageVideoItems' `silent`)
+    const hls = node.video_info.variants.find(v => v?.content_type === 'application/x-mpegURL')?.url;
+    if (typeof hls === 'string') entry.hls = hls;
+    out.push(entry);
+  };
   // ctx: the nearest Instagram post code, and for highlight items their reel and position in it
   const walk = (node, ctx) => {
     if (!node || typeof node !== 'object') return;
     if (Array.isArray(node)) return node.forEach(x => walk(x, ctx));
     if (typeof node.code === 'string') ctx = { ...ctx, code: node.code };
+    if (node.__typename === 'Tweet' && typeof node.id_str === 'string') ctx = { ...ctx, tweet: node.id_str };
     visit(node, ctx);
     if (typeof node.id === 'string' && Array.isArray(node.video?.bitrateInfo)) tiktok(node);
+    if (ctx.tweet && /^(video|animated_gif)$/.test(node.type) && Array.isArray(node.video_info?.variants)) x(node, ctx.tweet);
     const reel = typeof node.id === 'string' && node.id.startsWith('highlight:') && Array.isArray(node.items);
     for (const key in node) {
       if (reel && key === 'items') {
@@ -180,6 +206,7 @@ export function pageVideos(texts) {
       // not a JSON document; skip it
     }
   }
+  for (const v of out) if (v.site === 'x' && xCount.get(v.id) === 1) delete v.num; // number only real sets
   return out;
 }
 
@@ -193,6 +220,7 @@ const hostIs = (url, re) => {
 const FACEBOOK = /(^|\.)facebook\.com$/;
 const INSTAGRAM = /(^|\.)instagram\.com$/;
 const TIKTOK = /(^|\.)tiktok\.com$/;
+const X = /(^|\.)(x|twitter)\.com$/;
 
 // The video a page is about: Facebook /reel/<id>, /videos/<id>, ?v=<id>; Instagram /p|reel|reels|tv/<code>,
 // a story's number in /stories/<user>/<number>/, or "highlight:<id>" for /stories/highlights/<id>/.
@@ -209,6 +237,7 @@ export function videoIdFromUrl(url) {
     );
   }
   if (hostIs(url, TIKTOK)) return new URL(url).pathname.match(/^\/@[^/]+\/video\/(\d+)/)?.[1] ?? null;
+  if (hostIs(url, X)) return new URL(url).pathname.match(/\/status(?:es)?\/(\d+)/)?.[1] ?? null;
   if (!hostIs(url, FACEBOOK)) return null;
   const u = new URL(url);
   const v = u.searchParams.get('v');
@@ -217,18 +246,21 @@ export function videoIdFromUrl(url) {
 
 // Popup items for the video the page is about (the id in its URL, never preloaded next ones), else every one
 // found; for a highlight, all its videos numbered by position. HD first; http(s) only.
-export function pageVideoItems(texts, pageUrl) {
+// `silent`: HLS master URLs known to have no audio rendition (X), so those cards don't promise sound.
+export function pageVideoItems(texts, pageUrl, silent = new Set()) {
   const id = videoIdFromUrl(pageUrl);
   const item = (v, q) => {
-    const n = v.reel ? v.index + 1 : null;
+    const n = v.reel ? v.index + 1 : (v.num ?? null);
+    const sound = silent.has(v.hls) ? 'original has no sound' : 'with sound';
+    const what = q === 'gif' ? 'GIF (no sound)' : `${q.toUpperCase()} · ${sound}${q === 'hd' && v.hdNote ? ` (${v.hdNote})` : ''}`;
     return {
       url: v[q],
       kind: 'video',
       size: null,
-      label: `${n ? `#${n} · ` : ''}${q.toUpperCase()} · with sound${q === 'hd' && v.hdNote ? ` (${v.hdNote})` : ''}`,
-      filename: n
+      label: `${n ? `#${n} · ` : ''}${what}`,
+      filename: v.reel
         ? `${v.site}-highlight-${v.reel.slice('highlight:'.length)}-${n}-${q}.mp4`
-        : `${v.site}-${id ?? v.id}-${q}.mp4`,
+        : `${v.site}-${id ?? v.id}${n ? `-${n}` : ''}-${q}.mp4`,
       ...(v.thumb && { thumb: v.thumb }),
       ...(v.reel && { index: v.index, reelSize: v.reelSize }),
       ...(v.site === 'tiktok' && { fetch: true }), // CDN needs a Referer, which chrome.downloads can't send
@@ -236,9 +268,18 @@ export function pageVideoItems(texts, pageUrl) {
   };
   const items = pageVideos(texts)
     .filter(v => !id || v.id === id || v.pk === id || v.reel === id)
-    .flatMap(v => [v.hd && item(v, 'hd'), v.sd && item(v, 'sd')])
+    .flatMap(v => [v.hd && item(v, 'hd'), v.sd && item(v, 'sd'), v.gif && item(v, 'gif')])
     .filter(i => i && /^https?:/.test(i.url));
   return [...new Map(items.map(i => [i.url, i])).values()]; // a page may carry the same video twice
+}
+
+// X pages don't embed their videos; the tweet-result endpoint behind X's embeds returns them. The token is the
+// one X's embed script derives from the id. null for anything but an X status URL.
+export function syndicationUrl(pageUrl) {
+  const id = hostIs(pageUrl, X) && videoIdFromUrl(pageUrl);
+  if (!id) return null;
+  const token = ((Number(id) / 1e15) * Math.PI).toString(36).replace(/(0+|\.)/g, '');
+  return `https://cdn.syndication.twimg.com/tweet-result?id=${id}&token=${token}&lang=en`;
 }
 
 // Highlights: put the item the viewer is on first. `position` = {count, index} read from the page's progress bar;
@@ -253,14 +294,15 @@ export function markCurrent(items, position) {
 
 // On Facebook and Instagram every fbcdn/cdninstagram video or audio response is a DASH piece (video-only or
 // audio-only, often of the next video); on TikTok they are the player's chunked copies of the files offered
-// anyway. Either way they only confuse. The with-sound files come from pageVideoItems.
+// anyway; X plays HLS with the audio in a separate playlist. Either way they only confuse. The with-sound files
+// come from pageVideoItems.
 export const hideSitePieces = (items, pageUrl) =>
-  [FACEBOOK, INSTAGRAM, TIKTOK].some(site => hostIs(pageUrl, site))
+  [FACEBOOK, INSTAGRAM, TIKTOK, X].some(site => hostIs(pageUrl, site))
     ? items.filter(
         i =>
           !(
-            (i.kind === 'video' || i.kind === 'audio') &&
-            hostIs(i.url, /(^|\.)(fbcdn\.net|cdninstagram\.com|tiktok\.com|tiktokcdn(-[a-z]+)?\.com)$/)
+            ['video', 'audio', 'hls'].includes(i.kind) &&
+            hostIs(i.url, /(^|\.)(fbcdn\.net|cdninstagram\.com|tiktok\.com|tiktokcdn(-[a-z]+)?\.com|video\.twimg\.com)$/)
           ),
       )
     : items;

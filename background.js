@@ -1,4 +1,4 @@
-import { classify, cleanUrl, addItem, markCurrent, pageVideoItems, videoIdFromUrl } from './media.js';
+import { classify, cleanUrl, addItem, markCurrent, pageVideos, pageVideoItems, syndicationUrl, videoIdFromUrl } from './media.js';
 
 const store = chrome.storage.session;
 const tabKey = tabId => `tab:${tabId}`;
@@ -159,6 +159,20 @@ async function siteVideoItems(tabId, url) {
   const id = videoIdFromUrl(url);
   const cacheKey = `video:${id}`;
   let { [cacheKey]: items } = id ? await store.get(cacheKey) : {};
+  const xUrl = syndicationUrl(url);
+  if (!items && xUrl) {
+    const res = await fetch(xUrl);
+    if (!res.ok) throw new Error(`X didn't return this post (HTTP ${res.status}) — try Record tab`);
+    const text = await res.text();
+    // an HLS master without an audio rendition means the original video is silent
+    const silent = new Set();
+    await Promise.all(pageVideos([text]).map(async v => {
+      const master = v.hls && (await fetch(v.hls).then(r => (r.ok ? r.text() : null)).catch(() => null));
+      if (master && !/TYPE=AUDIO/.test(master)) silent.add(v.hls);
+    }));
+    items = pageVideoItems([text], url, silent);
+    if (items.length) await store.set({ [cacheKey]: items });
+  }
   if (!items) {
     items = pageVideoItems((await inject(tabId, pageData).catch(() => [])) ?? [], url);
     if (!items.length && id) items = pageVideoItems((await pageDataViaTab(url)) ?? [], url);
