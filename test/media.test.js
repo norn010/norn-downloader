@@ -256,6 +256,47 @@ test('markCurrent puts the item the viewer is on first, only when the progress b
   assert.equal(markCurrent(items, null), items);
 });
 
+// TikTok (verified 2026-09-28): __UNIVERSAL_DATA_FOR_REHYDRATION__ → webapp.video-detail.itemInfo.itemStruct;
+// video.bitrateInfo lists complete MP4s with sound. The video node itself also has an id and bitrateInfo.
+const TT_ID = '7000000000000000001';
+const TT = JSON.stringify({ __DEFAULT_SCOPE__: { 'webapp.video-detail': { statusCode: 0, itemInfo: { itemStruct: {
+  id: TT_ID, author: { uniqueId: 'somecreator' },
+  video: {
+    id: TT_ID, playAddr: 'https://v16.test/play540.mp4', downloadAddr: 'https://webapp-sg.test/watermarked',
+    cover: 'https://p16.test/cover.jpeg',
+    bitrateInfo: [
+      { GearName: 'adapt_lowest_1080_1', CodecType: 'h265_hvc1', PlayAddr: { Width: 1080, Height: 1920, UrlList: ['https://v16.test/1080.mp4', 'https://v19.test/1080.mp4'] } },
+      { GearName: 'lower_540_0', CodecType: 'h264', PlayAddr: { Width: 576, Height: 1024, UrlList: ['https://v16.test/540.mp4'] } },
+      { GearName: 'adapt_lower_720_1', CodecType: 'h265_hvc1', PlayAddr: { Width: 720, Height: 1280, UrlList: ['https://v16.test/720.mp4'] } },
+    ],
+  },
+} } } } });
+const TT_H264_ONLY = JSON.stringify({ itemStruct: { id: '111', video: { cover: 'https://p16.test/c2.jpeg', bitrateInfo: [
+  { CodecType: 'h264', PlayAddr: { Width: 720, Height: 1280, UrlList: ['https://v16.test/only.mp4'] } },
+] } } });
+
+test('pageVideos reads TikTok bitrateInfo: best version as HD (H.265 noted), best H.264 as SD, cover as thumbnail', () => {
+  assert.deepEqual(pageVideos([TT, TT_H264_ONLY]), [
+    { site: 'tiktok', id: TT_ID, sd: 'https://v16.test/540.mp4', hd: 'https://v16.test/1080.mp4', hdNote: 'H.265', thumb: 'https://p16.test/cover.jpeg' },
+    { site: 'tiktok', id: '111', sd: null, hd: 'https://v16.test/only.mp4', thumb: 'https://p16.test/c2.jpeg' },
+  ]);
+});
+
+test('pageVideoItems: TikTok video in the URL, H.265 noted on HD', () => {
+  const items = pageVideoItems([TT, TT_H264_ONLY], `https://www.tiktok.com/@somecreator/video/${TT_ID}?is_from_webapp=1&sender_device=pc`);
+  assert.deepEqual(items.map(i => [i.label, i.filename, i.thumb]), [
+    ['HD · with sound (H.265)', `tiktok-${TT_ID}-hd.mp4`, 'https://p16.test/cover.jpeg'],
+    ['SD · with sound', `tiktok-${TT_ID}-sd.mp4`, 'https://p16.test/cover.jpeg'],
+  ]);
+  // TikTok's CDN refuses chrome.downloads (no Referer possible), so these go through the extension's fetch
+  assert.ok(items.every(i => i.fetch === true));
+  assert.ok(pageVideoItems([IG_STORY], 'https://www.instagram.com/stories/someone/3000000000000000105/').every(i => !('fetch' in i)));
+});
+
+test('pageVideoItems lists a video once even when the page repeats it', () => {
+  assert.equal(pageVideoItems([TT, TT], `https://www.tiktok.com/@somecreator/video/${TT_ID}`).length, 2);
+});
+
 test('videoIdFromUrl finds Facebook video ids and Instagram post codes only', () => {
   assert.equal(videoIdFromUrl('https://www.facebook.com/reel/1000000000000001'), '1000000000000001');
   assert.equal(videoIdFromUrl('https://www.facebook.com/reel/1000000000000001/?s=ifu'), '1000000000000001');
@@ -271,6 +312,9 @@ test('videoIdFromUrl finds Facebook video ids and Instagram post codes only', ()
   assert.equal(videoIdFromUrl('https://www.instagram.com/stories/someone/3000000000000000105/'), '3000000000000000105');
   assert.equal(videoIdFromUrl('https://www.instagram.com/stories/someone/'), null);
   assert.equal(videoIdFromUrl('https://www.instagram.com/stories/highlights/17912345678901234/'), 'highlight:17912345678901234');
+  assert.equal(videoIdFromUrl(`https://www.tiktok.com/@somecreator/video/${TT_ID}?is_from_webapp=1`), TT_ID);
+  assert.equal(videoIdFromUrl('https://www.tiktok.com/@somecreator/photo/7661611868921859999'), null);
+  assert.equal(videoIdFromUrl('https://www.tiktok.com/foryou'), null);
   assert.equal(videoIdFromUrl('https://www.youtube.com/watch?v=kJiHgFeDcBa'), null);
   assert.equal(videoIdFromUrl('https://example.com/reel/1000000000000001'), null);
   assert.equal(videoIdFromUrl(undefined), null);
@@ -306,4 +350,17 @@ test('hideSitePieces drops fbcdn/cdninstagram video/audio pieces on Facebook and
   assert.deepEqual(hideSitePieces(items, 'https://www.instagram.com/p/AbCdEfGhIjK/').map(i => i.url), kept);
   assert.equal(hideSitePieces(items, 'https://example.com/').length, 5);
   assert.equal(hideSitePieces(items, undefined).length, 5);
+});
+
+test('hideSitePieces drops the TikTok player\'s chunked video files on TikTok pages, keeps images', () => {
+  const items = [
+    { url: 'https://v16-webapp-prime.tiktok.com/video/tos/alisg/abc/?mime_type=video_mp4', kind: 'video' },
+    { url: 'https://v77.tiktokcdn.com/xyz/video.mp4', kind: 'video' },
+    { url: 'https://p16-sign-sg.tiktokcdn.com/obj/cover.jpeg', kind: 'image' },
+    { url: 'https://cdn.example/clip.mp4', kind: 'video' },
+  ];
+  assert.deepEqual(hideSitePieces(items, `https://www.tiktok.com/@somecreator/video/${TT_ID}`).map(i => i.url), [
+    'https://p16-sign-sg.tiktokcdn.com/obj/cover.jpeg',
+    'https://cdn.example/clip.mp4',
+  ]);
 });

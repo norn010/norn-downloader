@@ -132,6 +132,7 @@ $('#download').onclick = async () => {
   for (const item of items.filter(i => selected.has(i.url))) {
     try {
       if (item.kind === 'hls') await chrome.runtime.sendMessage({ type: 'hls', url: item.url, name });
+      else if (item.fetch) await chrome.runtime.sendMessage({ type: 'file', url: item.url, filename: item.filename });
       else await chrome.downloads.download({ url: item.url, saveAs: false, ...(item.filename && { filename: item.filename }) });
     } catch (e) {
       errors.push(`${fileName(item.url)}: ${e.message}`);

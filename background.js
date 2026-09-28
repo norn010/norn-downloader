@@ -31,9 +31,21 @@ chrome.webRequest.onResponseStarted.addListener(
 
 chrome.tabs.onRemoved.addListener(tabId => serial(() => store.remove(tabKey(tabId))));
 
+// TikTok's CDN answers 403 without a tiktok.com Referer. Add it to the extension's own requests only (tabId -1),
+// never to pages. chrome.downloads bypasses these rules, so TikTok files are fetched by offscreen then saved.
+chrome.declarativeNetRequest.updateSessionRules({
+  removeRuleIds: [1],
+  addRules: [{
+    id: 1,
+    priority: 1,
+    action: { type: 'modifyHeaders', requestHeaders: [{ header: 'referer', operation: 'set', value: 'https://www.tiktok.com/' }] },
+    condition: { requestDomains: ['tiktok.com', 'tiktokcdn.com', 'tiktokcdn-us.com'], tabIds: [chrome.tabs.TAB_ID_NONE] },
+  }],
+});
+
 // ---- Offscreen jobs, badge, saving ----
 
-const OFFSCREEN_JOBS = ['hls', 'record', 'stop'];
+const OFFSCREEN_JOBS = ['hls', 'file', 'record', 'stop'];
 
 const hasOffscreen = async () =>
   (await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] })).length > 0;
@@ -110,7 +122,7 @@ const handlers = {
 function pageData() {
   return [...document.querySelectorAll('script[type="application/json"]')]
     .map(s => s.textContent)
-    .filter(t => /browser_native|"progressive_urls"|"video_versions"/.test(t));
+    .filter(t => /browser_native|"progressive_urls"|"video_versions"|"bitrateInfo"/.test(t));
 }
 
 const inject = async (tabId, func) => (await chrome.scripting.executeScript({ target: { tabId }, func }))[0].result;

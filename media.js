@@ -140,12 +140,32 @@ export function pageVideos(texts) {
       }
     }
   };
+  // TikTok: {"id":…,"video":{"cover":…,"bitrateInfo":[{"CodecType","PlayAddr":{"Width","Height","UrlList"}}]}}.
+  // Every version is a complete MP4 with sound; the best may be H.265, so the best H.264 is offered too.
+  const tiktok = node => {
+    const size = b => (b.PlayAddr?.Width ?? 0) * (b.PlayAddr?.Height ?? 0);
+    const url = b => b?.PlayAddr?.UrlList?.find(u => typeof u === 'string');
+    const biggest = list => list.reduce((a, b) => (!a || size(b) > size(a) ? b : a), null);
+    const usable = node.video.bitrateInfo.filter(url);
+    const best = biggest(usable);
+    if (!best) return;
+    const isHd = Math.min(best.PlayAddr?.Width ?? 0, best.PlayAddr?.Height ?? 0) >= 720;
+    const h264 = biggest(usable.filter(b => b.CodecType === 'h264' && size(b) < size(best)));
+    out.push({
+      site: 'tiktok', id: node.id,
+      sd: isHd ? (url(h264) ?? null) : url(best),
+      hd: isHd ? url(best) : null,
+      ...(isHd && !/h264/.test(best.CodecType ?? '') && { hdNote: 'H.265' }),
+      ...(typeof node.video.cover === 'string' && { thumb: node.video.cover }),
+    });
+  };
   // ctx: the nearest Instagram post code, and for highlight items their reel and position in it
   const walk = (node, ctx) => {
     if (!node || typeof node !== 'object') return;
     if (Array.isArray(node)) return node.forEach(x => walk(x, ctx));
     if (typeof node.code === 'string') ctx = { ...ctx, code: node.code };
     visit(node, ctx);
+    if (typeof node.id === 'string' && Array.isArray(node.video?.bitrateInfo)) tiktok(node);
     const reel = typeof node.id === 'string' && node.id.startsWith('highlight:') && Array.isArray(node.items);
     for (const key in node) {
       if (reel && key === 'items') {
@@ -172,6 +192,7 @@ const hostIs = (url, re) => {
 };
 const FACEBOOK = /(^|\.)facebook\.com$/;
 const INSTAGRAM = /(^|\.)instagram\.com$/;
+const TIKTOK = /(^|\.)tiktok\.com$/;
 
 // The video a page is about: Facebook /reel/<id>, /videos/<id>, ?v=<id>; Instagram /p|reel|reels|tv/<code>,
 // a story's number in /stories/<user>/<number>/, or "highlight:<id>" for /stories/highlights/<id>/.
@@ -187,6 +208,7 @@ export function videoIdFromUrl(url) {
       null
     );
   }
+  if (hostIs(url, TIKTOK)) return new URL(url).pathname.match(/^\/@[^/]+\/video\/(\d+)/)?.[1] ?? null;
   if (!hostIs(url, FACEBOOK)) return null;
   const u = new URL(url);
   const v = u.searchParams.get('v');
@@ -203,18 +225,20 @@ export function pageVideoItems(texts, pageUrl) {
       url: v[q],
       kind: 'video',
       size: null,
-      label: `${n ? `#${n} · ` : ''}${q.toUpperCase()} · with sound`,
+      label: `${n ? `#${n} · ` : ''}${q.toUpperCase()} · with sound${q === 'hd' && v.hdNote ? ` (${v.hdNote})` : ''}`,
       filename: n
         ? `${v.site}-highlight-${v.reel.slice('highlight:'.length)}-${n}-${q}.mp4`
         : `${v.site}-${id ?? v.id}-${q}.mp4`,
       ...(v.thumb && { thumb: v.thumb }),
       ...(v.reel && { index: v.index, reelSize: v.reelSize }),
+      ...(v.site === 'tiktok' && { fetch: true }), // CDN needs a Referer, which chrome.downloads can't send
     };
   };
-  return pageVideos(texts)
+  const items = pageVideos(texts)
     .filter(v => !id || v.id === id || v.pk === id || v.reel === id)
     .flatMap(v => [v.hd && item(v, 'hd'), v.sd && item(v, 'sd')])
     .filter(i => i && /^https?:/.test(i.url));
+  return [...new Map(items.map(i => [i.url, i])).values()]; // a page may carry the same video twice
 }
 
 // Highlights: put the item the viewer is on first. `position` = {count, index} read from the page's progress bar;
@@ -228,10 +252,15 @@ export function markCurrent(items, position) {
 }
 
 // On Facebook and Instagram every fbcdn/cdninstagram video or audio response is a DASH piece (video-only or
-// audio-only, often of the next video), which only confuses. The with-sound files come from pageVideoItems.
+// audio-only, often of the next video); on TikTok they are the player's chunked copies of the files offered
+// anyway. Either way they only confuse. The with-sound files come from pageVideoItems.
 export const hideSitePieces = (items, pageUrl) =>
-  hostIs(pageUrl, FACEBOOK) || hostIs(pageUrl, INSTAGRAM)
+  [FACEBOOK, INSTAGRAM, TIKTOK].some(site => hostIs(pageUrl, site))
     ? items.filter(
-        i => !((i.kind === 'video' || i.kind === 'audio') && hostIs(i.url, /(^|\.)(fbcdn\.net|cdninstagram\.com)$/)),
+        i =>
+          !(
+            (i.kind === 'video' || i.kind === 'audio') &&
+            hostIs(i.url, /(^|\.)(fbcdn\.net|cdninstagram\.com|tiktok\.com|tiktokcdn(-[a-z]+)?\.com)$/)
+          ),
       )
     : items;

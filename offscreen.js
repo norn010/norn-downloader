@@ -124,8 +124,16 @@ function stop(what) {
   } else lives.forEach(job => job.abort());
 }
 
+// A single file fetched by the extension (so declarativeNetRequest headers apply), then saved like HLS results.
+// ponytail: whole file in memory and the 30 s request timeout covers the body too; fine for short-video sites.
+async function file(url, filename) {
+  const body = await get(url);
+  await send({ type: 'save', url: URL.createObjectURL(new Blob([body])), filename });
+}
+
 const jobs = {
   hls: m => hls(m.url, m.name),
+  file: m => file(m.url, m.filename),
   record: m => record(m.streamId, m.name),
   stop: m => stop(m.what),
   revoke: m => URL.revokeObjectURL(m.url),

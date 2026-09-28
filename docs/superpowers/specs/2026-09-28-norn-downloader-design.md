@@ -44,7 +44,7 @@ one-shot scan function with `chrome.scripting.executeScript`.
 
 ## Permissions
 
-`webRequest`, `downloads`, `scripting`, `activeTab`, `offscreen`, `tabCapture`, `storage`; host permission `<all_urls>`.
+`webRequest`, `downloads`, `scripting`, `activeTab`, `offscreen`, `tabCapture`, `storage`, `declarativeNetRequestWithHostAccess` (TikTok Referer, see Flow 2b); host permission `<all_urls>`.
 
 ## Data model (`chrome.storage.session`)
 
@@ -70,7 +70,7 @@ one-shot scan function with `chrome.scripting.executeScript`.
 4. UI: filter buttons with counts (All / Images / Videos incl. audio / Streams), grid of cards (image thumbnail or type label, filename, size, checkbox), Select all (visible items), Download N, Record tab ⇄ Stop recording, Stop live (when `status.live`), `lastError` banner (dismiss → background clears it), hint when a `<video>` plays a `blob:` URL.
 5. Page-derived strings only go into the DOM via `textContent`/properties, never `innerHTML`.
 
-## Flow 2b — Facebook / Instagram videos with sound (added after first release)
+## Flow 2b — Facebook / Instagram / TikTok videos with sound (added after first release)
 
 Facebook and Instagram play video as DASH (video-only pieces + separate audio), so sniffed pieces have no sound.
 The loaded page's `<script type="application/json">` blocks (each one JSON document) carry ready-made progressive MP4s
@@ -94,6 +94,11 @@ Instagram highlights (`/stories/highlights/<id>/`, verified 2026-09-28): one ree
 
 6. `videoIdFromUrl` gives `highlight:<id>`; `pageVideos` tags items of that reel with `reel`, `index` (position among all items, photos included) and `reelSize`. `pageVideoItems` lists every video of the highlight, labelled `#<n> · HD · with sound`, named `instagram-highlight-<id>-<n>-hd.mp4`.
 7. Background injects `storyPosition()` into the open tab each time (never cached): the thin progress-bar row where exactly one segment holds a fill element gives `{count, index}`. `markCurrent` moves that item first as `This story · HD · with sound`, only if `count` equals the highlight's size and the item is a video; otherwise the list stays in order.
+TikTok (`/@<name>/video/<id>`, verified 2026-09-28): `__UNIVERSAL_DATA_FOR_REHYDRATION__` → `webapp.video-detail.itemInfo.itemStruct` = `{"id","video":{"cover","bitrateInfo":[{"CodecType","PlayAddr":{"Width","Height","UrlList"}}]}}`. Every version is a complete MP4 with sound; the player loads them in chunks (no audio/video split). `downloadAddr` (watermarked) answers 403 and is not used.
+
+9. `pageVideos` reads objects with `id` + `video.bitrateInfo`: the largest version is HD (labelled `(H.265)` unless H.264), the largest smaller H.264 version is SD (plays everywhere); `video.cover` is the thumbnail. On tiktok.com, `hideSitePieces` also drops tiktok.com/tiktokcdn video responses.
+10. TikTok's CDN answers 403 without a tiktok.com Referer. Background installs a `declarativeNetRequest` session rule setting `Referer: https://www.tiktok.com/` on requests to tiktok.com / tiktokcdn*.com with `tabId -1` (the extension's own requests only). `chrome.downloads` bypasses such rules, so TikTok items carry `fetch: true` and the popup sends `file {url, filename}`: offscreen fetches the file and saves it through the blob path used for HLS.
+
 8. Instagram cards use the item's smallest `image_versions2` candidate as the thumbnail instead of loading the video.
 
 ## Flow 3 — Downloads
