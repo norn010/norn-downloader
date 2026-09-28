@@ -62,6 +62,20 @@ test('safeName makes tab titles safe for Windows filenames', () => {
   assert.equal(safeName('x'.repeat(300)).length, 100);
 });
 
+test('safeName strips what Chrome refuses: format chars, DEL/C1, leading ~ or Unicode spaces, device names', () => {
+  assert.equal(safeName('Dev 👩‍💻 stream'), 'Dev 👩💻 stream'); // ZWJ removed
+  assert.equal(safeName('ข่าว​วันนี้'), 'ข่าววันนี้'); // zero-width space, common on Thai sites
+  assert.equal(safeName('‎title­'), 'title');
+  assert.equal(safeName('x\x7Fy\x85z'), 'x_y_z');
+  assert.equal(safeName('~temp'), 'temp');
+  assert.equal(safeName('a~b'), 'a~b');
+  assert.equal(safeName(' 　name '), 'name');
+  assert.equal(safeName('CON'), '_CON');
+  assert.equal(safeName('aux'), '_aux');
+  assert.equal(safeName('nul.txt'), '_nul.txt');
+  assert.equal(safeName('console'), 'console');
+});
+
 test('srcsetBest picks the largest candidate, URLs may contain commas', () => {
   assert.equal(srcsetBest('a.jpg 320w, b.jpg 1080w, c.jpg 640w'), 'b.jpg');
   assert.equal(srcsetBest('a.jpg 1x,b.jpg 2x'), 'b.jpg');

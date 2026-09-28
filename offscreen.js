@@ -3,19 +3,26 @@ import { parse, pickBest, fetchInOrder, liveEdge } from './hls.js';
 const send = msg => chrome.runtime.sendMessage(msg);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+const TIMEOUT_MS = 30_000; // calibration knob: a request stalled this long counts as failed
+
+// `signal` aborts the request and its retries (Stop, or a sibling segment failing).
 // ponytail: no Referer is sent; CDNs that check it answer 403. Add a declarativeNetRequest header rule if needed.
-async function get(url, as = 'arrayBuffer') {
+async function get(url, signal, read = res => res.arrayBuffer()) {
   for (let attempt = 1; ; attempt++) {
     try {
-      const res = await fetch(url, { credentials: 'include' });
+      const timeout = AbortSignal.timeout(TIMEOUT_MS);
+      const res = await fetch(url, { credentials: 'include', signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
       if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-      return await res[as]();
+      return await read(res);
     } catch (e) {
-      if (attempt >= 3) throw e;
+      if (attempt >= 3 || signal?.aborted) throw e;
       await sleep(500 * attempt);
     }
   }
 }
+
+// Parsed against the final URL, so playlists behind redirects resolve relative segment URLs correctly.
+const getPlaylist = async (url, signal) => parse(...(await get(url, signal, async res => [await res.text(), res.url])));
 
 // Offscreen can't use chrome.downloads; background saves the blob URL and asks us to revoke it after.
 const save = (parts, name, ext) =>
@@ -23,10 +30,10 @@ const save = (parts, name, ext) =>
 
 // Master playlist → best variant. Returns the media playlist and its URL.
 async function mediaPlaylist(url) {
-  let p = parse(await get(url, 'text'), url);
+  let p = await getPlaylist(url);
   if (p.master) {
     url = pickBest(p.variants).url;
-    p = parse(await get(url, 'text'), url);
+    p = await getPlaylist(url);
   }
   if (p.unsupported) throw new Error(`${p.unsupported} — use Record tab instead`);
   return { p, url };
@@ -48,33 +55,34 @@ async function vod(p, name) {
   await save(parts, name, p.map ? 'mp4' : 'ts');
 }
 
-const liveStops = new Set();
+const lives = new Set(); // AbortControllers of running live captures; Stop aborts them
 
 async function live(p, url, name) {
   const parts = p.map ? [await get(p.map)] : [];
   const ext = p.map ? 'mp4' : 'ts';
-  let stopped = false;
+  const job = new AbortController();
   let last = liveEdge(p.segments);
   const firstSeq = last;
-  const stop = () => (stopped = true);
-  liveStops.add(stop);
+  lives.add(job);
   await send({ type: 'status', patch: { live: true } });
   try {
     while (true) {
       for (const s of p.segments) {
         if (s.seq > last) {
-          parts.push(await get(s.url));
+          parts.push(await get(s.url, job.signal));
           last = s.seq;
         }
       }
-      if (stopped || p.ended) break;
+      if (job.signal.aborted || p.ended) break;
       await sleep((p.targetDuration || 2) * 1000);
-      if (stopped) break;
-      p = parse(await get(url, 'text'), url);
+      if (job.signal.aborted) break;
+      p = await getPlaylist(url, job.signal);
     }
+  } catch (e) {
+    if (!job.signal.aborted) throw e; // Stop cutting a request short is not an error
   } finally {
-    liveStops.delete(stop);
-    await send({ type: 'status', patch: { live: liveStops.size > 0 } });
+    lives.delete(job);
+    await send({ type: 'status', patch: { live: lives.size > 0 } });
     if (last > firstSeq) await save(parts, name, ext); // keep what was captured even if the loop failed
   }
 }
@@ -113,7 +121,7 @@ async function record(streamId, name) {
 function stop(what) {
   if (what === 'record') {
     if (recorder?.state === 'recording') recorder.stop();
-  } else liveStops.forEach(s => s());
+  } else lives.forEach(job => job.abort());
 }
 
 const jobs = {

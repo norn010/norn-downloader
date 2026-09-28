@@ -102,6 +102,19 @@ test('fetchInOrder stops starting fetches and reporting progress after the first
   assert.equal(progress.length, seen, 'no progress after failure');
 });
 
+test('fetchInOrder aborts the signal it hands to get after the first failure, so retries stop too', async () => {
+  const signals = [];
+  const get = async (u, signal) => {
+    signals.push(signal);
+    await delay(5);
+    if (u === '1') throw new Error('boom');
+    return u;
+  };
+  await assert.rejects(fetchInOrder(['0', '1', '2', '3'], get, () => {}, 2), /boom/);
+  assert.ok(signals.length > 0);
+  assert.ok(signals.every(s => s?.aborted === true), 'every get saw an aborted signal');
+});
+
 test('fetchInOrder with no URLs resolves to []', async () => {
   assert.deepEqual(await fetchInOrder([], async () => 1), []);
 });

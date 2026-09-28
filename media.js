@@ -42,11 +42,13 @@ export function addItem(items, item) {
 }
 
 // Tab title → filename Windows and Chrome accept. Counts code points so emoji aren't cut in half.
+// Chrome also refuses format chars (ZWJ, zero-width space, LRM), a leading ~ or Unicode space, and device names.
 export function safeName(title) {
-  const name = Array.from(String(title ?? '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_'))
+  let name = Array.from(String(title ?? '').replace(/[\\/:*?"<>|\p{Cc}]/gu, '_').replace(/\p{Cf}/gu, ''))
     .slice(0, 100)
     .join('')
-    .replace(/^[. ]+|[. ]+$/g, '');
+    .replace(/^[\p{White_Space}.~]+|[\p{White_Space}.]+$/gu, '');
+  if (/^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(name)) name = `_${name}`;
   return name || 'norn';
 }
 

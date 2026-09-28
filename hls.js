@@ -44,23 +44,24 @@ export const pickBest = variants => variants.reduce((a, b) => (b.bandwidth > a.b
 // Returns the seq to treat as "already seen" (-1 = take everything).
 export const liveEdge = segments => segments.at(-4)?.seq ?? -1;
 
-// get(url) for every url, at most `limit` in flight, results in input order.
-// After the first failure: no new fetches, no more onEach calls, and the promise rejects with it.
+// get(url, signal) for every url, at most `limit` in flight, results in input order.
+// After the first failure: signal aborted (in-flight fetches and their retries stop), no new fetches,
+// no more onEach calls, and the promise rejects with that failure.
 export async function fetchInOrder(urls, get, onEach = () => {}, limit = 6) {
   const out = new Array(urls.length);
+  const failed = new AbortController();
   let next = 0;
   let done = 0;
-  let failed = false;
   const worker = async () => {
-    while (!failed && next < urls.length) {
+    while (!failed.signal.aborted && next < urls.length) {
       const i = next++;
       try {
-        out[i] = await get(urls[i]);
+        out[i] = await get(urls[i], failed.signal);
       } catch (e) {
-        failed = true;
+        failed.abort(e);
         throw e;
       }
-      if (!failed) onEach(++done, urls.length);
+      if (!failed.signal.aborted) onEach(++done, urls.length);
     }
   };
   await Promise.all(Array.from({ length: Math.min(limit, urls.length) }, worker));

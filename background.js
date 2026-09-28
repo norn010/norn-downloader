@@ -52,9 +52,10 @@ async function ensureOffscreen() {
   await creating;
 }
 
+// An unread error outranks REC/LIVE until the popup dismisses it.
 async function idleBadge() {
-  const { status = {} } = await store.get('status');
-  await chrome.action.setBadgeText({ text: status.recording ? 'REC' : status.live ? 'LIVE' : '' });
+  const { status = {}, lastError } = await store.get(['status', 'lastError']);
+  await chrome.action.setBadgeText({ text: lastError ? '!' : status.recording ? 'REC' : status.live ? 'LIVE' : '' });
 }
 
 const setStatus = patch =>
@@ -78,15 +79,21 @@ async function toOffscreen(msg) {
 // downloadId -> blob URL owned by offscreen; revoked once the file is written.
 // ponytail: lost if the worker restarts mid-download, the blob then lives until the offscreen doc closes
 const blobs = new Map();
+// offscreen may already be gone, then so is the blob
+const revoke = url => chrome.runtime.sendMessage({ target: 'offscreen', type: 'revoke', url }).catch(() => {});
 
 const handlers = {
   progress: m => chrome.action.setBadgeText({ text: m.text }),
   status: m => setStatus(m.patch),
   error: m => fail(m.message),
   async save(m) {
+    const download = filename => chrome.downloads.download({ url: m.url, filename, saveAs: false });
     try {
-      blobs.set(await chrome.downloads.download({ url: m.url, filename: m.filename, saveAs: false }), m.url);
+      // a capture can't be redone, so a name Chrome still refuses falls back to a plain one
+      const id = await download(m.filename).catch(() => download(`norn-${Date.now()}.${m.filename.split('.').pop()}`));
+      blobs.set(id, m.url);
     } catch (e) {
+      revoke(m.url);
       return fail(`Save failed: ${e.message}`);
     }
     await idleBadge();
@@ -105,7 +112,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
 
 chrome.downloads.onChanged.addListener(({ id, state }) => {
   if (!blobs.has(id) || !state || state.current === 'in_progress') return;
-  // offscreen may already be gone, then so is the blob
-  chrome.runtime.sendMessage({ target: 'offscreen', type: 'revoke', url: blobs.get(id) }).catch(() => {});
+  revoke(blobs.get(id));
   blobs.delete(id);
 });

@@ -103,8 +103,11 @@ Background → offscreen: `hls`, `record`, `stop`, `revoke {url}`.
 
 ## Error handling
 
-- Segment fetch: 3 attempts, then the job fails; non-OK HTTP reported as `HTTP <status> for <url>`.
-- Any job failure or save failure: `lastError` set, badge `!`; popup shows the banner until dismissed.
+- Segment fetch: 3 attempts, then the job fails; non-OK HTTP reported as `HTTP <status> for <url>`. Every request times out after 30 s. After the first failed segment, in-flight fetches and their retries are aborted.
+- Stop live aborts in-flight requests; what was captured is saved and no error is reported.
+- Playlists are parsed against their final (post-redirect) URL.
+- Any job failure or save failure: `lastError` set, badge `!` (it outranks REC/LIVE until dismissed); popup shows the banner until dismissed.
+- A filename Chrome refuses falls back to `norn-<timestamp>.<ext>`; if saving still fails the blob URL is revoked.
 - `stop` when no offscreen document exists: background resets `status`.
 
 ## Testing
