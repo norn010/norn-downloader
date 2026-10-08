@@ -82,7 +82,23 @@ async function fail(message) {
   await chrome.action.setBadgeText({ text: '!' });
 }
 
+// Firefox: no offscreen documents, so this background page (it has a DOM) runs offscreen.js itself.
+const local = chrome.offscreen ? null : import('./offscreen.js').then(m => (m.reroute(msg => handlers[msg.type]?.(msg)), m));
+
+// Firefox suspends an idle event page, which would kill a running HLS job or a blob still being saved.
+// An extension API call every 20 s counts as activity. ponytail: forum-reported trick, not documented by Mozilla.
+let busy = 0;
+if (local) setInterval(() => (busy || blobs.size) && chrome.runtime.getPlatformInfo(), 20_000);
+
 async function toOffscreen(msg) {
+  if (local) {
+    busy++;
+    try {
+      return await (await local).jobs[msg.type]?.(msg);
+    } finally {
+      busy--;
+    }
+  }
   if (msg.type === 'stop' && !(await hasOffscreen())) return setStatus({ recording: false, live: false });
   await ensureOffscreen();
   await chrome.runtime.sendMessage({ ...msg, target: 'offscreen' });
@@ -92,7 +108,7 @@ async function toOffscreen(msg) {
 // ponytail: lost if the worker restarts mid-download, the blob then lives until the offscreen doc closes
 const blobs = new Map();
 // offscreen may already be gone, then so is the blob
-const revoke = url => chrome.runtime.sendMessage({ target: 'offscreen', type: 'revoke', url }).catch(() => {});
+const revoke = url => local ? URL.revokeObjectURL(url) : chrome.runtime.sendMessage({ target: 'offscreen', type: 'revoke', url }).catch(() => {});
 
 const handlers = {
   progress: m => chrome.action.setBadgeText({ text: m.text }),
@@ -132,9 +148,9 @@ function ytdlp(url, quality) {
   });
   port.onDisconnect.addListener(() => {
     if (finished) return;
-    const why = chrome.runtime.lastError?.message ?? '';
+    const why = port.error?.message ?? chrome.runtime.lastError?.message ?? ''; // Firefox: port.error
     fail(
-      /not found/i.test(why)
+      /not found|no such native/i.test(why)
         ? 'The yt-dlp helper is not installed yet: run native\\install.ps1 (see README), then reload the extension.'
         : `The yt-dlp helper stopped${why ? `: ${why}` : ''}`,
     );

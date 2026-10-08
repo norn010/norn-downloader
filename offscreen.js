@@ -1,6 +1,9 @@
 import { parse, pickBest, fetchInOrder, liveEdge } from './hls.js';
 
-const send = msg => chrome.runtime.sendMessage(msg);
+// Chrome: this runs in the offscreen document and talks to background by message. Firefox has no offscreen
+// documents but its background page has a DOM, so background imports this module and reroutes `send` to itself.
+let send = msg => chrome.runtime.sendMessage(msg);
+export const reroute = fn => (send = fn);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const TIMEOUT_MS = 30_000; // calibration knob: a request stalled this long counts as failed
@@ -135,7 +138,7 @@ async function file(url, filename) {
   await saveAs([await get(url)], filename);
 }
 
-const jobs = {
+export const jobs = {
   hls: m => hls(m.url, m.name),
   file: m => file(m.url, m.filename),
   record: m => record(m.streamId, m.name),

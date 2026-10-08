@@ -8,14 +8,20 @@ $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $extensionDir = Split-Path -Parent $here
 
+if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+  throw 'winget is missing: install "App Installer" from the Microsoft Store, then run this again'
+}
+# --source winget skips the Microsoft Store source, which is slow and can sit on a hidden prompt.
+# The first winget run on a PC still downloads its package index (a minute or two), so its output is left visible.
 foreach ($package in 'yt-dlp.yt-dlp', 'Gyan.FFmpeg', 'DenoLand.Deno') {
-  winget list --id $package --exact --accept-source-agreements *> $null
+  Write-Host "Checking $package ..."
+  winget list --id $package --exact --source winget --accept-source-agreements --disable-interactivity
   if ($LASTEXITCODE -eq 0) {
     Write-Host "$package is already installed"
     continue
   }
   Write-Host "Installing $package ..."
-  winget install --id $package --exact --silent --accept-package-agreements --accept-source-agreements
+  winget install --id $package --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
   if ($LASTEXITCODE -ne 0) { throw "winget could not install $package (exit code $LASTEXITCODE)" }
 }
 
@@ -53,6 +59,18 @@ $json = [ordered]@{
 
 New-Item -Path 'HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.norn.ytdlp' -Value $manifest -Force | Out-Null
 
+# Firefox: same helper, its own manifest keyed by the gecko id from manifest.json
+$firefoxManifest = Join-Path $here 'com.norn.ytdlp.firefox.json'
+$json = [ordered]@{
+  name = 'com.norn.ytdlp'
+  description = 'Norn Downloader yt-dlp helper'
+  path = $bat
+  type = 'stdio'
+  allowed_extensions = @('norn-downloader@norn010')
+} | ConvertTo-Json
+[IO.File]::WriteAllText($firefoxManifest, $json, $utf8)
+New-Item -Path 'HKCU:\Software\Mozilla\NativeMessagingHosts\com.norn.ytdlp' -Value $firefoxManifest -Force | Out-Null
+
 Write-Host ''
 Write-Host "Done. Extension id: $id"
-Write-Host 'Now reload Norn Downloader in chrome://extensions.'
+Write-Host 'Now reload Norn Downloader in chrome://extensions (Firefox: about:debugging).'

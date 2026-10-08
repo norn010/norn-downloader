@@ -3,10 +3,11 @@
   "name": "Norn Downloader",
   "version": "0.1.0",
   "description": "Pick and download images, videos and HLS streams from any page, or record the tab.",
-  "minimum_chrome_version": "116",
+  "minimum_chrome_version": "121",
+  "browser_specific_settings": { "gecko": { "id": "norn-downloader@norn010", "strict_min_version": "128.0", "data_collection_permissions": { "required": ["none"] } } },
   "permissions": ["webRequest", "downloads", "scripting", "activeTab", "offscreen", "tabCapture", "storage", "declarativeNetRequestWithHostAccess", "nativeMessaging"],
   "host_permissions": ["<all_urls>"],
-  "background": { "service_worker": "background.js", "type": "module" },
+  "background": { "service_worker": "background.js", "scripts": ["background.js"], "type": "module" },
   "content_scripts": [
     {
       "matches": ["https://x.com/*", "https://twitter.com/*", "https://mobile.twitter.com/*"],

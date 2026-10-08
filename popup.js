@@ -200,6 +200,8 @@ $('#record').onclick = async () => {
     showError(`Couldn't record this tab: ${e.message}`);
   }
 };
+// Firefox has no tabCapture (its screen share has no tab audio), so no Record there
+$('#record').hidden = $('#recordNote').hidden = !chrome.tabCapture;
 // a running recording or live capture is what the user most likely came back to stop
 if (status.recording || status.live) $('#menu').hidden = false;
 
@@ -242,7 +244,7 @@ $('#openFolder').onclick = () => {
 };
 
 if (lastError) showError(lastError);
-$('#hint').hidden = !scan.blobVideo || siteVideoPage || youtube;
+$('#hint').hidden = !scan.blobVideo || siteVideoPage || youtube || !chrome.tabCapture;
 render();
 
 // Site videos with sound go on top; background may open a hidden tab to get them (a few seconds).
@@ -251,6 +253,6 @@ loadingSite = false;
 const known = new Set(items.map(i => i.url));
 items.unshift(...(site?.items ?? []).filter(i => !known.has(i.url)));
 if (siteVideoPage && !site?.items?.length) {
-  showError(site?.error ?? "Couldn't find this video's file with sound. Try ⋯ → Record this tab.");
+  showError(site?.error ?? `Couldn't find this video's file with sound.${chrome.tabCapture ? ' Try ⋯ → Record this tab.' : ''}`);
 }
 render();

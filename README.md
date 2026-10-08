@@ -43,6 +43,15 @@ Chrome extension (Manifest V3) · ไม่มี dependency · ไม่ต้�
 3. กด **Load unpacked** → เลือกโฟลเดอร์ `norn-downloader`
 4. ปักหมุดไอคอนหนอน 🐛 ไว้ที่แถบเครื่องมือ
 
+### 🦊 Firefox (128+)
+
+1. เปิด `about:debugging#/runtime/this-firefox`
+2. กด **Load Temporary Add-on…** → เลือก `manifest.json` ในโฟลเดอร์ `norn-downloader`
+
+ติดตั้งแบบนี้จะหายเมื่อปิด Firefox ถ้าอยากให้อยู่ถาวร ส่งขึ้น [addons.mozilla.org](https://addons.mozilla.org/developers/) แบบ **unlisted** ให้ Mozilla เซ็น หรือใช้ Firefox Developer Edition แล้วตั้ง `xpinstall.signatures.required` = `false` ใน `about:config`
+
+> Firefox ไม่มี **Record this tab** (ไม่มี API อัดแท็บพร้อมเสียง) ฟีเจอร์อื่นใช้ได้เหมือน Chrome
+
 อยากโหลด YouTube ด้วย? ตั้งค่า yt-dlp เพิ่มอีกนิด ดูหัวข้อ **YouTube ด้วย yt-dlp** ด้านล่าง
 
 ---
@@ -83,7 +92,7 @@ YouTube ล็อกลิงก์วิดีโอไว้ extension จึ�
 powershell -ExecutionPolicy Bypass -File native\install.ps1
 ```
 
-สคริปต์จะติดตั้ง **yt-dlp**, **ffmpeg** และ **Deno** ผ่าน winget แล้วลงทะเบียนตัวเชื่อมกับ Chrome ให้ user นี้เท่านั้น จากนั้นรีโหลด Norn Downloader ใน `chrome://extensions`
+สคริปต์จะติดตั้ง **yt-dlp**, **ffmpeg** และ **Deno** ผ่าน winget แล้วลงทะเบียนตัวเชื่อมกับ Chrome และ Firefox ให้ user นี้เท่านั้น จากนั้นรีโหลด Norn Downloader (`chrome://extensions` หรือ `about:debugging`)
 
 **ใช้งาน** บนหน้า YouTube ปุ่ม **⬇ yt-dlp** กับช่องเลือกความละเอียดจะอยู่บนสุดของ popup (เว็บอื่นอยู่ในเมนู ⋯) ไฟล์ไปอยู่ในโฟลเดอร์ **Downloads** เปิด popup อีกครั้งจะเห็น **✓ Saved** และปุ่ม **Open folder**
 
